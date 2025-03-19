@@ -13,21 +13,21 @@ const PORT = process.env.PORT || 5000;
 
 // LINE Bot設定
 const config = {
-  channelSecret: process.env.LINE_CHANNEL_SECRET || "162400cfc8a09a24918e963c5f2cd27b",
-  channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN || "AS8xkZaKSKh9OjFDXHI8zCo4VXIBH6+cDEICFBi5vPgnsy6QOfD7ia88+Fb/Jjm/yqV8U3KFqDnA+qxcfU477fPuvFJAXVRGpZ75w64HvuxFVeeQkUreKmw+js+vHTkbEgI8zuBjGpskQ7EtJ/SWdwdB04t89/1O/w1cDnyilFU="
-};
-
+    channelSecret: process.env.LINE_CHANNEL_SECRET || "162400cfc8a09a24918e963c5f2cd27b",
+    channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN || "AS8xkZaKSKh9OjFDXHI8zCo4VXIBH6+cDEICFBi5vPgnsy6QOfD7ia88+Fb/Jjm/yqV8U3KFqDnA+qxcfU477fPuvFJAXVRGpZ75w64HvuxFVeeQkUreKmw+js+vHTkbEgI8zuBjGpskQ7EtJ/SWdwdB04t89/1O/w1cDnyilFU="
+  };
+  
 // Notion設定
-const notion = new Client({
-  auth: process.env.NOTION_API_KEY || "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"
-});
-const NOTION_DATABASE_ID = process.env.NOTION_DATABASE_ID || "1bacb4ce5b9e805294b3d06d5d282f51";
-
+  const notion = new Client({
+    auth: process.env.NOTION_API_KEY || "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"
+  });
+  const NOTION_DATABASE_ID = process.env.NOTION_DATABASE_ID || "1bacb4ce5b9e805294b3d06d5d282f51";
+  
 // OCR.space APIキー
-const OCR_API_KEY = process.env.OCR_API_KEY || "K85126819088957"; // 無料利用枠のデモキー
-
+  const OCR_API_KEY = process.env.OCR_API_KEY || "K85126819088957"; // 無料利用枠のデモキー
+  
 // Gemini API設定
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+  const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
 const app = express();
 
@@ -295,92 +295,51 @@ function simpleCategorizeBySrore(storeName) {
   return 'その他';
 }
 
-// 日付形式を確実にYYYY-MM-DD形式に変換する関数
-function formatDateForNotion(dateStr) {
-    try {
-      // 様々な日付形式に対応
-      let date;
-      if (dateStr.match(/\d{4}[/-]\d{1,2}[/-]\d{1,2}/)) {
-        // YYYY-MM-DD or YYYY/MM/DD
-        date = new Date(dateStr.replace(/\//g, '-'));
-      } else if (dateStr.match(/\d{1,2}[/-]\d{1,2}\s+\d{1,2}:\d{2}/)) {
-        // MM-DD HH:MM or MM/DD HH:MM (今年と仮定)
-        const currentYear = new Date().getFullYear();
-        date = new Date(`${currentYear}-${dateStr.split(' ')[0].replace(/\//g, '-')}`);
-      } else {
-        // その他の形式は現在日付を使用
-        date = new Date();
-      }
-      return date.toISOString().split('T')[0]; // YYYY-MM-DD形式に変換
-    } catch (e) {
-      console.error("日付変換エラー:", e);
-      return new Date().toISOString().split('T')[0]; // エラー時は今日の日付
-    }
-  }
-
-  // Notionへの書き込み関数を修正
-  async function addToNotion(extractedData, category) {
-    try {
-      if (!NOTION_DATABASE_ID) {
-        console.log("Notion DATABASE IDが設定されていないため、追加をスキップします");
-        return false;
-      }
-      
-      // 数値の変換を確実に
-      const amount = parseInt(extractedData.amount.replace(/[^\d]/g, ''), 10) || 0;
-      // 日付を適切にフォーマット
-      const date = formatDateForNotion(extractedData.date);
-      
-      console.log("Notion APIにリクエスト送信", {
-        databaseId: NOTION_DATABASE_ID,
-        storeName: extractedData.storeName,
-        amount: amount,
-        date: date,
-        category: category
-      });
-      
-      // Notionへのリクエスト
-      const response = await notion.pages.create({
-        parent: { database_id: NOTION_DATABASE_ID },
-        properties: {
-          名前: {
-            title: [
-              {
-                text: {
-                  content: extractedData.storeName
-                }
-              }
-            ]
-          },
-          金額: {
-            number: amount
-          },
-          日付: {
-            date: {
-              start: date
-            }
-          },
-          カテゴリ: {
-            select: {
-              name: category
-            }
-          }
-        }
-      });
-      
-      console.log('Notionに追加しました', JSON.stringify(response, null, 2));
-      return true;
-    } catch (error) {
-      console.error('Notion追加エラー:', error.message);
-      if (error.body) {
-        console.error('Notion APIエラー詳細:', JSON.stringify(error.body, null, 2));
-      }
+// Notionデータベースに情報を追加する関数
+async function addToNotion(extractedData, category) {
+  try {
+    if (!NOTION_DATABASE_ID) {
+      console.log("Notion DATABASE IDが設定されていないため、追加をスキップします");
       return false;
     }
+    
+    console.log("Notion APIにリクエスト送信");
+    await notion.pages.create({
+      parent: { database_id: NOTION_DATABASE_ID },
+      properties: {
+        名前: {
+          title: [
+            {
+              text: {
+                content: extractedData.storeName
+              }
+            }
+          ]
+        },
+        金額: {
+          number: parseInt(extractedData.amount, 10) || 0
+        },
+        日付: {
+          date: {
+            start: extractedData.date
+          }
+        },
+        カテゴリ: {
+          select: {
+            name: category
+          }
+        }
+      }
+    });
+    
+    console.log('Notionに追加しました');
+    return true;
+  } catch (error) {
+    console.error('Notion追加エラー:', error);
+    return false;
   }
+}
 
-  // ポートリスニング
 app.listen(PORT, () => {
-    console.log(`サーバーが起動しました: http://localhost:${PORT}`);
-    console.log(`LINE Webhookエンドポイント: http://localhost:${PORT}/webhook`);
-  });
+  console.log(`Server running at port ${PORT}`);
+});
