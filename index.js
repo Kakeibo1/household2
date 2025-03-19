@@ -21,7 +21,7 @@ const config = {
   const notion = new Client({
     auth: process.env.NOTION_API_KEY || "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"
   });
-  const NOTION_DATABASE_ID = process.env.NOTION_DATABASE_ID || "1bacb4ce5b9e805294b3d06d5d282f51";
+  const NOTION_DATABASE_ID = process.env.NOTION_DATABASE_ID || "1bacb4ce-5b9e-8052-94b3-d06d5d282f51";
   
 // OCR.space APIキー
   const OCR_API_KEY = process.env.OCR_API_KEY || "K85126819088957"; // 無料利用枠のデモキー
