@@ -378,3 +378,9 @@ function formatDateForNotion(dateStr) {
       return false;
     }
   }
+
+  // ポートリスニング
+app.listen(PORT, () => {
+    console.log(`サーバーが起動しました: http://localhost:${PORT}`);
+    console.log(`LINE Webhookエンドポイント: http://localhost:${PORT}/webhook`);
+  });
