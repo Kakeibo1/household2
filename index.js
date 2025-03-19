@@ -343,3 +343,89 @@ async function addToNotion(extractedData, category) {
 app.listen(PORT, () => {
   console.log(`Server running at port ${PORT}`);
 });
+
+// グローバル変数として、処理済みメッセージIDを保存する配列を追加
+const processedMessageIds = new Set();
+
+// handleEvent関数内で重複チェックを実装
+async function handleEvent(event) {
+  console.log("イベント処理開始:", JSON.stringify(event));
+  
+  if (event.type !== "message") {
+    return Promise.resolve(null);
+  }
+
+  // メッセージが既に処理済みかチェック
+  if (processedMessageIds.has(event.message.id)) {
+    console.log("既に処理済みのメッセージです:", event.message.id);
+    return Promise.resolve(null);
+  }
+
+  // 以下、既存の処理...
+  
+  // 処理成功後にIDを記録
+  processedMessageIds.add(event.message.id);
+  
+  // セットのサイズが大きくなりすぎないように古いIDを削除（例：100件以上なら古いものを削除）
+  if (processedMessageIds.size > 100) {
+    const iterator = processedMessageIds.values();
+    processedMessageIds.delete(iterator.next().value);
+  }
+}
+
+
+
+
+async function addToNotion(extractedData, category) {
+    try {
+      if (!NOTION_DATABASE_ID) {
+        console.log("Notion DATABASE IDが設定されていないため、追加をスキップします");
+        return false;
+      }
+      
+      // 同じデータが既に存在するか確認
+      const existingEntries = await notion.databases.query({
+        database_id: NOTION_DATABASE_ID,
+        filter: {
+          and: [
+            {
+              property: "名前",
+              title: {
+                equals: extractedData.storeName
+              }
+            },
+            {
+              property: "金額",
+              number: {
+                equals: parseInt(extractedData.amount, 10) || 0
+              }
+            },
+            {
+              property: "日付",
+              date: {
+                equals: extractedData.date
+              }
+            }
+          ]
+        }
+      });
+      
+      // 既に存在する場合はスキップ
+      if (existingEntries.results.length > 0) {
+        console.log('同じデータが既に存在します。追加をスキップします。');
+        return true;
+      }
+      
+      // 以下、既存の追加処理...
+      console.log("Notion APIにリクエスト送信");
+      await notion.pages.create({
+        // ...
+      });
+      
+      console.log('Notionに追加しました');
+      return true;
+    } catch (error) {
+      console.log('Notion追加エラー:', error);
+      return false;
+    }
+  }
