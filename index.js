@@ -295,51 +295,86 @@ function simpleCategorizeBySrore(storeName) {
   return 'その他';
 }
 
-// Notionデータベースに情報を追加する関数
-async function addToNotion(extractedData, category) {
-  try {
-    if (!NOTION_DATABASE_ID) {
-      console.log("Notion DATABASE IDが設定されていないため、追加をスキップします");
-      return false;
+// 日付形式を確実にYYYY-MM-DD形式に変換する関数
+function formatDateForNotion(dateStr) {
+    try {
+      // 様々な日付形式に対応
+      let date;
+      if (dateStr.match(/\d{4}[/-]\d{1,2}[/-]\d{1,2}/)) {
+        // YYYY-MM-DD or YYYY/MM/DD
+        date = new Date(dateStr.replace(/\//g, '-'));
+      } else if (dateStr.match(/\d{1,2}[/-]\d{1,2}\s+\d{1,2}:\d{2}/)) {
+        // MM-DD HH:MM or MM/DD HH:MM (今年と仮定)
+        const currentYear = new Date().getFullYear();
+        date = new Date(`${currentYear}-${dateStr.split(' ')[0].replace(/\//g, '-')}`);
+      } else {
+        // その他の形式は現在日付を使用
+        date = new Date();
+      }
+      return date.toISOString().split('T')[0]; // YYYY-MM-DD形式に変換
+    } catch (e) {
+      console.error("日付変換エラー:", e);
+      return new Date().toISOString().split('T')[0]; // エラー時は今日の日付
     }
-    
-    console.log("Notion APIにリクエスト送信");
-    await notion.pages.create({
-      parent: { database_id: NOTION_DATABASE_ID },
-      properties: {
-        名前: {
-          title: [
-            {
-              text: {
-                content: extractedData.storeName
+  }
+
+  // Notionへの書き込み関数を修正
+  async function addToNotion(extractedData, category) {
+    try {
+      if (!NOTION_DATABASE_ID) {
+        console.log("Notion DATABASE IDが設定されていないため、追加をスキップします");
+        return false;
+      }
+      
+      // 数値の変換を確実に
+      const amount = parseInt(extractedData.amount.replace(/[^\d]/g, ''), 10) || 0;
+      // 日付を適切にフォーマット
+      const date = formatDateForNotion(extractedData.date);
+      
+      console.log("Notion APIにリクエスト送信", {
+        databaseId: NOTION_DATABASE_ID,
+        storeName: extractedData.storeName,
+        amount: amount,
+        date: date,
+        category: category
+      });
+      
+      // Notionへのリクエスト
+      const response = await notion.pages.create({
+        parent: { database_id: NOTION_DATABASE_ID },
+        properties: {
+          名前: {
+            title: [
+              {
+                text: {
+                  content: extractedData.storeName
+                }
               }
+            ]
+          },
+          金額: {
+            number: amount
+          },
+          日付: {
+            date: {
+              start: date
             }
-          ]
-        },
-        金額: {
-          number: parseInt(extractedData.amount, 10) || 0
-        },
-        日付: {
-          date: {
-            start: extractedData.date
-          }
-        },
-        カテゴリ: {
-          select: {
-            name: category
+          },
+          カテゴリ: {
+            select: {
+              name: category
+            }
           }
         }
+      });
+      
+      console.log('Notionに追加しました', JSON.stringify(response, null, 2));
+      return true;
+    } catch (error) {
+      console.error('Notion追加エラー:', error.message);
+      if (error.body) {
+        console.error('Notion APIエラー詳細:', JSON.stringify(error.body, null, 2));
       }
-    });
-    
-    console.log('Notionに追加しました');
-    return true;
-  } catch (error) {
-    console.error('Notion追加エラー:', error);
-    return false;
+      return false;
+    }
   }
-}
-
-app.listen(PORT, () => {
-  console.log(`Server running at port ${PORT}`);
-});
