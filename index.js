@@ -457,7 +457,7 @@ async function categorizePayment(extractedData) {
         
         console.log("Gemini Flash APIにリクエスト送信");
         const response = await axios.post(
-          `https://generativelanguage.googleapis.com/v1/models/gemini-flash:generateContent?key=${GEMINI_API_KEY}`,
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`,
           {
             contents: [{
               parts: [{
