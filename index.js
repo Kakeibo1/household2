@@ -291,7 +291,7 @@ async function extractDataFromImage(imagePath) {
     
     // PayPayの画面から情報を抽出するロジック
     const storeNameMatch = fullText.match(/支払い先[:：]\s*(.+?)(?:\n|$)/i) || 
-                          fullText.match(/(.+?)に支払いました/i) ||
+                          fullText.match(/(.+?)に支払い/i) ||
                           fullText.match(/(.+?)\s*店舗/i) ||
                           fullText.match(/店舗名[:：]\s*(.+?)(?:\n|$)/i);
     
