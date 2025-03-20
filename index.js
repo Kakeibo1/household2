@@ -292,31 +292,23 @@ async function extractDataFromImage(imagePath) {
       const fullText = response.data.ParsedResults[0].ParsedText || '';
       console.log('抽出されたテキスト:', fullText);
       
-      // ここに前処理コードを追加
-      // OCRのテキストを前処理（改行を適切に修正）
-      let processedText = fullText
-        .replace(/\n/g, ' ')   // 改行をスペースに変換（情報を分断しないため）
-        .replace(/\s+/g, ' ')  // 連続する空白を1つに圧縮
-        .trim();               // 先頭・末尾の空白を削除
-      console.log("処理後のOCRテキスト:", processedText);
-      
       // 画像タイプを判定（PayPayかレシートか）
-      const isPayPay = processedText.includes('PayPay') || 
-                       processedText.includes('支払い先') || 
-                       processedText.includes('に支払い');
+      const isPayPay = fullText.includes('PayPay') || 
+                       fullText.includes('支払い先') || 
+                       fullText.includes('に支払い');
       
       let result = {};
       
       if (isPayPay) {
-        // PayPay画面からの抽出ロジックで、フルテキストの代わりに処理済みテキストを使用
-        result = extractPayPayData(processedText);
+        // 既存のPayPay画面からの抽出ロジック
+        result = extractPayPayData(fullText);
       } else {
-        // レシートからの抽出ロジックで、フルテキストの代わりに処理済みテキストを使用
-        result = extractReceiptData(processedText);
+        // レシートからの抽出ロジック
+        result = extractReceiptData(fullText);
       }
       
       // 共通の後処理
-      result.rawText = fullText;  // rawTextには元のテキストを保持
+      result.rawText = fullText;
       
       console.log("抽出結果:", result);
       return result;
