@@ -265,33 +265,70 @@ async function processImageAsync(messageId) {
 
 // OCR.space APIを使用して画像からテキストを抽出
 async function extractDataFromImage(imagePath) {
-  try {
-    const formData = new FormData();
-    formData.append('language', 'jpn'); // 日本語
-    formData.append('isOverlayRequired', 'false');
-    formData.append('file', fs.createReadStream(imagePath));
-    formData.append('OCREngine', '2'); // より高度なOCRエンジン
-    
-    console.log("OCR.space APIにリクエスト送信");
-    const response = await axios.post('https://api.ocr.space/parse/image', formData, {
-      headers: {
-        ...formData.getHeaders(),
-        'apikey': OCR_API_KEY,
-      },
-    });
-    
-    console.log("OCR.space API応答:", JSON.stringify(response.data, null, 2));
-    
-    if (!response.data || !response.data.ParsedResults || response.data.ParsedResults.length === 0) {
-      throw new Error('OCR処理に失敗しました: ' + JSON.stringify(response.data));
+    try {
+      const formData = new FormData();
+      formData.append('language', 'jpn'); // 日本語
+      formData.append('isOverlayRequired', 'false');
+      formData.append('file', fs.createReadStream(imagePath));
+      formData.append('OCREngine', '2'); // より高度なOCRエンジン
+      // レシートに適した設定を追加
+      formData.append('scale', 'true'); // 高解像度対応
+      formData.append('detectOrientation', 'true'); // 向き検出
+      
+      console.log("OCR.space APIにリクエスト送信");
+      const response = await axios.post('https://api.ocr.space/parse/image', formData, {
+        headers: {
+          ...formData.getHeaders(),
+          'apikey': OCR_API_KEY,
+        },
+      });
+      
+      console.log("OCR.space API応答:", JSON.stringify(response.data, null, 2));
+      
+      if (!response.data || !response.data.ParsedResults || response.data.ParsedResults.length === 0) {
+        throw new Error('OCR処理に失敗しました: ' + JSON.stringify(response.data));
+      }
+      
+      const fullText = response.data.ParsedResults[0].ParsedText || '';
+      console.log('抽出されたテキスト:', fullText);
+      
+      // 画像タイプを判定（PayPayかレシートか）
+      const isPayPay = fullText.includes('PayPay') || 
+                       fullText.includes('支払い先') || 
+                       fullText.includes('に支払い');
+      
+      let result = {};
+      
+      if (isPayPay) {
+        // 既存のPayPay画面からの抽出ロジック
+        result = extractPayPayData(fullText);
+      } else {
+        // レシートからの抽出ロジック
+        result = extractReceiptData(fullText);
+      }
+      
+      // 共通の後処理
+      result.rawText = fullText;
+      
+      console.log("抽出結果:", result);
+      return result;
+    } catch (error) {
+      console.error('テキスト抽出エラー:', error);
+      return {
+        storeName: '読み取りエラー',
+        amount: '0',
+        date: new Date().toISOString().split('T')[0],
+        rawText: error.message
+      };
     }
-    
-    const fullText = response.data.ParsedResults[0].ParsedText || '';
-    console.log('抽出されたテキスト:', fullText);
-    
-    // PayPayの画面から情報を抽出するロジック
+  }
+  
+  // PayPay画面からデータを抽出する関数
+  function extractPayPayData(fullText) {
     const storeNameMatch = fullText.match(/支払い先[:：]\s*(.+?)(?:\n|$)/i) || 
                           fullText.match(/(.+?)に支払い/i) ||
+                          fullText.match(/(.+?)に支払/i) ||
+                          fullText.match(/(.+?)に支/i) ||
                           fullText.match(/(.+?)\s*店舗/i) ||
                           fullText.match(/店舗名[:：]\s*(.+?)(?:\n|$)/i);
     
@@ -304,25 +341,103 @@ async function extractDataFromImage(imagePath) {
                       fullText.match(/(\d{1,2}[/-]\d{1,2}\s+\d{1,2}:\d{2})/i) ||
                       fullText.match(/日時[:：]\s*(.+?)(?:\n|$)/i);
     
-    const result = {
+    return {
       storeName: storeNameMatch ? storeNameMatch[1].trim() : '不明',
       amount: amountMatch ? amountMatch[1].replace(/,/g, '') : '0',
-      date: dateMatch ? dateMatch[1] : new Date().toISOString().split('T')[0],
-      rawText: fullText
-    };
-    
-    console.log("抽出結果:", result);
-    return result;
-  } catch (error) {
-    console.error('テキスト抽出エラー:', error);
-    return {
-      storeName: '読み取りエラー',
-      amount: '0',
-      date: new Date().toISOString().split('T')[0],
-      rawText: error.message
+      date: dateMatch ? dateMatch[1] : new Date().toISOString().split('T')[0]
     };
   }
-}
+  
+  // レシートからデータを抽出する関数
+  function extractReceiptData(fullText) {
+    // レシートの店舗名は通常、最初の数行に表示される
+    const lines = fullText.split('\n').filter(line => line.trim().length > 0);
+    let storeName = '不明';
+    
+    // 店舗名の候補として最初の3行を考慮
+    if (lines.length > 0) {
+      // 明らかに店舗名でないパターンを除外
+      const nonStorePatterns = [
+        /領収書/i, /レシート/i, /receipt/i, /電話/i, /TEL/i, 
+        /^\d+$/, /合計/, /^\s*$/
+      ];
+      
+      for (let i = 0; i < Math.min(3, lines.length); i++) {
+        const isNonStore = nonStorePatterns.some(pattern => pattern.test(lines[i]));
+        if (!isNonStore && lines[i].length > 1) {
+          storeName = lines[i].trim();
+          break;
+        }
+      }
+    }
+    
+    // 金額の抽出 (レシートでは通常「合計」「小計」「お会計」などの近くに表示)
+    let amount = '0';
+    const totalPatterns = [
+      /合計\s*[:：]?\s*[\d,]+/i,
+      /合計\s*[:：]?\s*¥\s*[\d,]+/i,
+      /小計\s*[:：]?\s*[\d,]+/i,
+      /小計\s*[:：]?\s*¥\s*[\d,]+/i,
+      /お会計\s*[:：]?\s*[\d,]+/i,
+      /(?:合計|小計|お会計).*?(\d[\d,]+)円/i,
+      /(?:合計|小計|お会計).*?¥\s*(\d[\d,]+)/i,
+      /(?:合計|小計|お会計).*?(\d[\d,]+)/i
+    ];
+    
+    for (const pattern of totalPatterns) {
+      const match = fullText.match(pattern);
+      if (match) {
+        // 数字部分のみを抽出
+        const amountStr = match[0].match(/(\d[\d,]+)/);
+        if (amountStr) {
+          amount = amountStr[0].replace(/,/g, '');
+          break;
+        }
+      }
+    }
+    
+    // 日付の抽出
+    const datePatterns = [
+      /(\d{4})[年/.-](\d{1,2})[月/.-](\d{1,2})/i,
+      /(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})/i,
+      /(\d{1,2})[/.-](\d{1,2})[/.-](\d{2})/i,
+      /日付\s*[:：]?\s*(.+?)(?:\n|$)/i,
+      /(\d{4})年(\d{1,2})月(\d{1,2})日/i
+    ];
+    
+    let dateStr = new Date().toISOString().split('T')[0]; // デフォルト値
+    
+    for (const pattern of datePatterns) {
+      const match = fullText.match(pattern);
+      if (match) {
+        // パターンに応じた日付フォーマットの処理
+        if (match[0].includes('日付')) {
+          dateStr = match[1];
+        } else if (match.length >= 4) {
+          // フォーマットが YYYY/MM/DD
+          if (match[1].length === 4) {
+            dateStr = `${match[1]}-${match[2].padStart(2, '0')}-${match[3].padStart(2, '0')}`;
+          } 
+          // フォーマットが DD/MM/YYYY
+          else if (match[3].length === 4) {
+            dateStr = `${match[3]}-${match[2].padStart(2, '0')}-${match[1].padStart(2, '0')}`;
+          }
+          // フォーマットが DD/MM/YY
+          else if (match[3].length === 2) {
+            const year = parseInt(match[3]) < 50 ? `20${match[3]}` : `19${match[3]}`;
+            dateStr = `${year}-${match[2].padStart(2, '0')}-${match[1].padStart(2, '0')}`;
+          }
+        }
+        break;
+      }
+    }
+    
+    return {
+      storeName: storeName,
+      amount: amount,
+      date: dateStr
+    };
+  }
 
 // 支払いのカテゴリを判定する関数
 async function categorizePayment(extractedData) {
