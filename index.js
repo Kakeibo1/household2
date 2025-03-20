@@ -501,6 +501,7 @@ function simpleCategorizeBySrore(storeName) {
              storeLower.includes('食堂')) {
     return '食品';
   } else if (storeLower.includes('富士薬品') ||
+             storeLower.includes('ドラッグストア')
              storeLower.includes('ツルハ')) {
     return '日用品';
   } else if (storeLower.includes('ハンズ') || 
