@@ -15,19 +15,19 @@ const PORT = process.env.PORT || 5000;
 const config = {
     channelSecret: process.env.LINE_CHANNEL_SECRET || "162400cfc8a09a24918e963c5f2cd27b",
     channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN || "AS8xkZaKSKh9OjFDXHI8zCo4VXIBH6+cDEICFBi5vPgnsy6QOfD7ia88+Fb/Jjm/yqV8U3KFqDnA+qxcfU477fPuvFJAXVRGpZ75w64HvuxFVeeQkUreKmw+js+vHTkbEgI8zuBjGpskQ7EtJ/SWdwdB04t89/1O/w1cDnyilFU="
-  };
-  
+};
+
 // Notion設定
-  const notion = new Client({
+const notion = new Client({
     auth: process.env.NOTION_API_KEY || "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"
-  });
-  const NOTION_DATABASE_ID = process.env.NOTION_DATABASE_ID || "1bacb4ce-5b9e-8052-94b3-d06d5d282f51";
-  
+});
+const NOTION_DATABASE_ID = process.env.NOTION_DATABASE_ID || "1bacb4ce-5b9e-8052-94b3-d06d5d282f51";
+
 // OCR.space APIキー
-  const OCR_API_KEY = process.env.OCR_API_KEY || "K85126819088957"; // 無料利用枠のデモキー
-  
+const OCR_API_KEY = process.env.OCR_API_KEY || "K85126819088957"; // 無料利用枠のデモキー
+
 // Gemini API設定
-  const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
 const app = express();
 
@@ -39,11 +39,79 @@ app.use('/api', express.urlencoded({ extended: true }));
 // アップロード用の一時ディレクトリ
 const upload = multer({ dest: 'uploads/' });
 
+// 処理済みメッセージを追跡するためのMap
+// キー: メッセージID, 値: {timestamp: 処理時間, count: 処理回数}
+const processedMessages = new Map();
+
+// メッセージIDとユーザーIDの対応を保存するためのMap
+// キー: メッセージID, 値: {userId: ユーザーID, timestamp: 保存時間}
+const messageUserMap = new Map();
+
+// 処理済みメッセージの保持期間(ミリ秒)
+const MESSAGE_RETENTION_PERIOD = 60 * 60 * 1000; // 1時間
+
+// 定期的に古いメッセージIDを削除する処理
+setInterval(() => {
+  const now = Date.now();
+  
+  // 処理済みメッセージの掃除
+  for (const [messageId, data] of processedMessages.entries()) {
+    if (now - data.timestamp > MESSAGE_RETENTION_PERIOD) {
+      processedMessages.delete(messageId);
+    }
+  }
+  
+  // メッセージ-ユーザーマッピングの掃除
+  for (const [messageId, data] of messageUserMap.entries()) {
+    if (now - data.timestamp > MESSAGE_RETENTION_PERIOD) {
+      messageUserMap.delete(messageId);
+    }
+  }
+}, 30 * 60 * 1000); // 30分ごとに掃除
+
 // webhookルートに対してのみLINEミドルウェアを適用
 app.post("/webhook", line.middleware(config), (req, res) => {
   console.log("リクエスト受信：", req.body.events);
   
-  Promise.all(req.body.events.map(handleEvent))
+  // 各イベントについて、メッセージIDとユーザーIDのマッピングを保存
+  req.body.events.forEach(event => {
+    if (event.type === "message" && event.message && event.source && event.source.userId) {
+      messageUserMap.set(event.message.id, {
+        userId: event.source.userId,
+        timestamp: Date.now()
+      });
+      console.log(`メッセージID ${event.message.id} とユーザーID ${event.source.userId} のマッピングを保存しました`);
+    }
+  });
+  
+  // すべてのイベントに対して重複チェックを行い、処理済みなら無視する
+  const events = req.body.events.filter(event => {
+    if (event.type !== "message") return true; // メッセージ以外はそのまま処理
+    
+    const messageId = event.message.id;
+    const now = Date.now();
+    
+    // 処理済みメッセージの場合
+    if (processedMessages.has(messageId)) {
+      const data = processedMessages.get(messageId);
+      data.count++;
+      console.log(`重複メッセージ検出: ${messageId} (${data.count}回目)`);
+      return false; // このイベントをスキップ
+    }
+    
+    // 新しいメッセージの場合
+    processedMessages.set(messageId, { timestamp: now, count: 1 });
+    return true;
+  });
+  
+  // フィルタ後のイベントが空の場合はすぐに応答
+  if (events.length === 0) {
+    console.log("すべてのイベントが処理済み。スキップします。");
+    return res.status(200).end();
+  }
+  
+  // 処理対象のイベントがある場合
+  Promise.all(events.map(handleEvent))
     .then((result) => res.json(result))
     .catch((err) => {
       console.error("イベント処理エラー：", err);
@@ -74,88 +142,125 @@ async function handleEvent(event) {
   // 画像メッセージの処理
   else if (event.message.type === "image") {
     try {
-      // LINE Messaging APIから画像を取得
-      console.log("画像メッセージID:", event.message.id);
-      const stream = await client.getMessageContent(event.message.id);
-      let chunks = [];
-      
-      stream.on('data', (chunk) => {
-        chunks.push(chunk);
-      });
-      
-      return new Promise((resolve, reject) => {
-        stream.on('end', async () => {
-          try {
-            console.log("画像データの取得完了");
-            const imageBuffer = Buffer.concat(chunks);
-            
-            // ディレクトリが存在しない場合は作成
-            const uploadsDir = path.join(__dirname, 'uploads');
-            if (!fs.existsSync(uploadsDir)) {
-              fs.mkdirSync(uploadsDir, { recursive: true });
-            }
-            
-            // 一時的にファイルに保存
-            const tempFilePath = path.join(uploadsDir, `temp_${event.message.id}.jpg`);
-            fs.writeFileSync(tempFilePath, imageBuffer);
-            console.log("画像を保存しました:", tempFilePath);
-            
-            // 画像からテキストを抽出（OCR.space APIを使用）
-            console.log("OCR処理を開始します");
-            const extractedData = await extractDataFromImage(tempFilePath);
-            console.log("抽出データ:", extractedData);
-            
-            // 抽出したデータからカテゴリを判定
-            console.log("カテゴリ判定を開始します");
-            const category = await categorizePayment(extractedData);
-            console.log("判定されたカテゴリ:", category);
-            
-            // Notionに書き込み
-            if (NOTION_DATABASE_ID) {
-              console.log("Notionへの書き込みを開始します");
-              await addToNotion(extractedData, category);
-            } else {
-              console.log("Notion DATABASE IDが設定されていないため、Notionへの書き込みをスキップします");
-            }
-            
-            // 結果をLINEに返信
-            let replyMessage = {
-              type: "text",
-              text: `読み取り結果:\n店舗: ${extractedData.storeName}\n金額: ${extractedData.amount}円\n日付: ${extractedData.date}\n分類: ${category}\n\n${NOTION_DATABASE_ID ? "Notionに保存しました！" : "Notion連携は設定されていません"}`
-            };
-            
-            // 一時ファイルの削除
-            fs.unlinkSync(tempFilePath);
-            console.log("一時ファイルを削除しました");
-            
-            resolve(client.replyMessage(event.replyToken, replyMessage));
-          } catch (error) {
-            console.error('画像処理エラー:', error);
-            resolve(client.replyMessage(event.replyToken, {
-              type: "text", 
-              text: "画像の処理中にエラーが発生しました。もう一度試してください。エラー詳細: " + error.message
-            }));
-          }
-        });
-        
-        stream.on('error', (err) => {
-          console.error('画像取得エラー:', err);
-          resolve(client.replyMessage(event.replyToken, {
-            type: "text",
-            text: "画像の取得中にエラーが発生しました。もう一度試してください。"
-          }));
-        });
-      });
-    } catch (error) {
-      console.error('メッセージ処理エラー:', error);
-      return client.replyMessage(event.replyToken, {
+      // まず即座に応答を返す
+      await client.replyMessage(event.replyToken, {
         type: "text",
-        text: "エラーが発生しました。もう一度試してください。エラー: " + error.message
+        text: "画像を受け取りました。解析を開始します..."
       });
+      
+      // 残りの処理は非同期で行う
+      processImageAsync(event.message.id);
+      
+      // 既に応答を返しているので、ここではnullを返す
+      return Promise.resolve(null);
+    } catch (error) {
+      console.error('メッセージ応答エラー:', error);
+      // エラーが発生した場合でも処理を続行する
+      return Promise.resolve(null);
     }
   }
   
   return Promise.resolve(null);
+}
+
+// メッセージIDからユーザーIDを取得する関数
+async function getUserIdFromMessageId(messageId) {
+  if (messageUserMap.has(messageId)) {
+    const userId = messageUserMap.get(messageId).userId;
+    console.log(`メッセージID ${messageId} からユーザーID ${userId} を取得しました`);
+    return userId;
+  }
+  console.log(`メッセージID ${messageId} に対応するユーザーIDが見つかりませんでした`);
+  return null;
+}
+
+// 画像を非同期で処理する関数
+async function processImageAsync(messageId) {
+  try {
+    // LINE Messaging APIから画像を取得
+    console.log("画像メッセージID:", messageId);
+    const stream = await client.getMessageContent(messageId);
+    let chunks = [];
+    
+    stream.on('data', (chunk) => {
+      chunks.push(chunk);
+    });
+    
+    stream.on('end', async () => {
+      try {
+        console.log("画像データの取得完了");
+        const imageBuffer = Buffer.concat(chunks);
+        
+        // ディレクトリが存在しない場合は作成
+        const uploadsDir = path.join(__dirname, 'uploads');
+        if (!fs.existsSync(uploadsDir)) {
+          fs.mkdirSync(uploadsDir, { recursive: true });
+        }
+        
+        // 一時的にファイルに保存
+        const tempFilePath = path.join(uploadsDir, `temp_${messageId}.jpg`);
+        fs.writeFileSync(tempFilePath, imageBuffer);
+        console.log("画像を保存しました:", tempFilePath);
+        
+        // 画像からテキストを抽出（OCR.space APIを使用）
+        console.log("OCR処理を開始します");
+        const extractedData = await extractDataFromImage(tempFilePath);
+        console.log("抽出データ:", extractedData);
+        
+        // 抽出したデータからカテゴリを判定
+        console.log("カテゴリ判定を開始します");
+        const category = await categorizePayment(extractedData);
+        console.log("判定されたカテゴリ:", category);
+        
+        // Notionに書き込み
+        if (NOTION_DATABASE_ID) {
+          console.log("Notionへの書き込みを開始します");
+          await addToNotion(extractedData, category);
+        } else {
+          console.log("Notion DATABASE IDが設定されていないため、Notionへの書き込みをスキップします");
+        }
+        
+        // 処理結果をプッシュメッセージで送信
+        const userId = await getUserIdFromMessageId(messageId);
+        if (userId) {
+          await client.pushMessage(userId, {
+            type: "text",
+            text: `読み取り結果:\n店舗: ${extractedData.storeName}\n金額: ${extractedData.amount}円\n日付: ${extractedData.date}\n分類: ${category}\n\n${NOTION_DATABASE_ID ? "Notionに保存しました！" : "Notion連携は設定されていません"}`
+          });
+        } else {
+          console.log("ユーザーIDが見つからないため、処理結果を送信できません");
+        }
+        
+        // 一時ファイルの削除
+        fs.unlinkSync(tempFilePath);
+        console.log("一時ファイルを削除しました");
+      } catch (error) {
+        console.error('画像処理エラー:', error);
+        // エラーメッセージをプッシュ通知
+        const userId = await getUserIdFromMessageId(messageId);
+        if (userId) {
+          await client.pushMessage(userId, {
+            type: "text",
+            text: "画像の処理中にエラーが発生しました。もう一度試してください。エラー詳細: " + error.message
+          });
+        }
+      }
+    });
+    
+    stream.on('error', async (err) => {
+      console.error('画像取得エラー:', err);
+      // エラーメッセージをプッシュ通知
+      const userId = await getUserIdFromMessageId(messageId);
+      if (userId) {
+        await client.pushMessage(userId, {
+          type: "text",
+          text: "画像の取得中にエラーが発生しました。もう一度試してください。"
+        });
+      }
+    });
+  } catch (error) {
+    console.error('非同期処理エラー:', error);
+  }
 }
 
 // OCR.space APIを使用して画像からテキストを抽出
@@ -295,7 +400,6 @@ function simpleCategorizeBySrore(storeName) {
   return 'その他';
 }
 
-
 // Notionデータベースに情報を追加する関数（重複チェック機能付き）
 async function addToNotion(extractedData, category) {
     try {
@@ -375,5 +479,5 @@ async function addToNotion(extractedData, category) {
   }
 
 app.listen(PORT, () => {
-    console.log(`Server running at port ${PORT}`);
+  console.log(`Server running at port ${PORT}`);
 });
