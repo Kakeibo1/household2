@@ -294,3 +294,7 @@ function simpleCategorizeBySrore(storeName) {
   }
   return 'その他';
 }
+
+app.listen(PORT, () => {
+  console.log(`Server running at port ${PORT}`);
+});
