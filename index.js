@@ -455,9 +455,9 @@ async function categorizePayment(extractedData) {
         カテゴリ名だけを返してください。特別な記号や説明は不要です。
         `;
         
-        console.log("Gemini APIにリクエスト送信");
+        console.log("Gemini Flash APIにリクエスト送信");
         const response = await axios.post(
-          `https://generativelanguage.googleapis.com/v1/models/gemini-pro:generateContent?key=${GEMINI_API_KEY}`,
+          `https://generativelanguage.googleapis.com/v1/models/gemini-flash:generateContent?key=${GEMINI_API_KEY}`,
           {
             contents: [{
               parts: [{
