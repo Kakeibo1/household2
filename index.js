@@ -337,14 +337,43 @@ async function extractDataFromImage(imagePath) {
                         fullText.match(/支払金額[:：]\s*([0-9,]+)/i) ||
                         fullText.match(/金額[:：]\s*([0-9,]+)/i);
     
-    const dateMatch = fullText.match(/(\d{4}[/-]\d{1,2}[/-]\d{1,2})/i) || 
+    // PayPay特有の日時形式を追加（「2023年4月7日 10時25分39秒」など）
+    const dateMatch = fullText.match(/(\d{4})年(\d{1,2})月(\d{1,2})日\s+\d{1,2}時\d{1,2}分\d{1,2}秒/i) ||
+                      fullText.match(/(\d{4})年(\d{1,2})月(\d{1,2})日/i) ||
+                      fullText.match(/(\d{4}[/-]\d{1,2}[/-]\d{1,2})/i) || 
                       fullText.match(/(\d{1,2}[/-]\d{1,2}\s+\d{1,2}:\d{2})/i) ||
                       fullText.match(/日時[:：]\s*(.+?)(?:\n|$)/i);
+    
+    let dateStr = new Date().toISOString().split('T')[0]; // デフォルト値
+    
+    if (dateMatch) {
+      if (dateMatch[0].includes('年') && dateMatch.length >= 4) {
+        // 「2023年4月7日 10時25分39秒」のようなフォーマット
+        const year = dateMatch[1];
+        const month = dateMatch[2].padStart(2, '0');
+        const day = dateMatch[3].padStart(2, '0');
+        dateStr = `${year}-${month}-${day}`;
+      } else if (dateMatch[1] && dateMatch[1].includes('/')) {
+        // スラッシュ区切りの日付
+        const parts = dateMatch[1].split('/');
+        if (parts.length >= 3) {
+          // YYYY/MM/DD形式
+          dateStr = parts[0].length === 4 
+            ? `${parts[0]}-${parts[1].padStart(2, '0')}-${parts[2].padStart(2, '0')}` 
+            : dateStr;
+        }
+      } else if (dateMatch[1]) {
+        // その他の形式
+        dateStr = dateMatch[1];
+      }
+    }
+    
+    console.log(`抽出された日付: ${dateStr}`);
     
     return {
       storeName: storeNameMatch ? storeNameMatch[1].trim() : '不明',
       amount: amountMatch ? amountMatch[1].replace(/,/g, '') : '0',
-      date: dateMatch ? dateMatch[1] : new Date().toISOString().split('T')[0]
+      date: dateStr
     };
   }
   
@@ -455,6 +484,7 @@ async function categorizePayment(extractedData) {
         カテゴリ名だけを返してください。特別な記号や説明は不要です。
         `;
         
+        //http...の部分は，Google AI SutuioのAPI取得ページにある，「クイックスタートガイド」付近に(使用できる)最新モデルが含まれた文字列がある．
         console.log("Gemini Flash APIにリクエスト送信");
         const response = await axios.post(
           `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`,
@@ -466,7 +496,7 @@ async function categorizePayment(extractedData) {
             }]
           }
         );
-        
+   
         console.log("Gemini API応答:", JSON.stringify(response.data, null, 2));
         
         // レスポンスからカテゴリを抽出
