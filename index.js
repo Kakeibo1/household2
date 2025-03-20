@@ -373,3 +373,7 @@ async function addToNotion(extractedData, category) {
       return false;
     }
   }
+
+app.listen(PORT, () => {
+    console.log(`Server running at port ${PORT}`);
+});
