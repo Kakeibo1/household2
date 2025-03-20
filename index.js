@@ -372,29 +372,22 @@ async function extractDataFromImage(imagePath) {
     }
     
     // 金額の抽出 (レシートでは通常「合計」「小計」「お会計」などの近くに表示)
+    // 金額の抽出 (レシートでは通常「合計」「小計」「お会計」などの近くに表示)
     let amount = '0';
     const totalPatterns = [
-      /合計\s*[:：]?\s*[\d,]+/i,
-      /合計\s*[:：]?\s*¥\s*[\d,]+/i,
-      /小計\s*[:：]?\s*[\d,]+/i,
-      /小計\s*[:：]?\s*¥\s*[\d,]+/i,
-      /お会計\s*[:：]?\s*[\d,]+/i,
-      /(?:合計|小計|お会計).*?(\d[\d,]+)円/i,
-      /(?:合計|小計|お会計).*?¥\s*(\d[\d,]+)/i,
-      /(?:合計|小計|お会計).*?(\d[\d,]+)/i
+      /(?:合計|小計|お会計)\s*[:：]?\s*(?:¥|￥)?\s*(\d[\d,]*)/i
     ];
-    
+
     for (const pattern of totalPatterns) {
       const match = fullText.match(pattern);
-      if (match) {
-        // 数字部分のみを抽出
-        const amountStr = match[0].match(/(\d[\d,]+)/);
-        if (amountStr) {
-          amount = amountStr[0].replace(/,/g, '');
-          break;
-        }
+      if (match && match[1]) { 
+        amount = match[1].replace(/,/g, ''); // カンマを削除
+        break;
       }
-    }
+}
+
+console.log(`抽出された金額: ${amount}`);
+
     
     // 日付の抽出
     const datePatterns = [
