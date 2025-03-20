@@ -820,37 +820,24 @@ async function processImageAsync(messageId) {
         const category = await categorizePayment(extractedData);
         console.log("判定されたカテゴリ:", category);
         
-        // ユーザーID取得
-        const userId = await getUserIdFromMessageId(messageId);
-        if (!userId) {
-          console.log("ユーザーIDが見つからないため、処理を中断します");
-          return;
+        // Notionに書き込み
+        if (NOTION_DATABASE_ID) {
+          console.log("Notionへの書き込みを開始します");
+          await addToNotion(extractedData, category);
+        } else {
+          console.log("Notion DATABASE IDが設定されていないため、Notionへの書き込みをスキップします");
         }
         
-        // 現在のデータをユーザー状態に保存
-        const fullData = {
-          ...extractedData,
-          category: category
-        };
-        
-        // ユーザー状態を初期化または更新
-        if (!userStates.has(userId)) {
-          userStates.set(userId, {
-            currentData: fullData,
-            editMode: false,
-            editField: null,
-            timestamp: Date.now()
+        // 処理結果をプッシュメッセージで送信
+        const userId = await getUserIdFromMessageId(messageId);
+        if (userId) {
+          await client.pushMessage(userId, {
+            type: "text",
+            text: `読み取り結果:\n店舗: ${extractedData.storeName}\n金額: ${extractedData.amount}円\n日付: ${extractedData.date}\n分類: ${category}\n\n${NOTION_DATABASE_ID ? "Notionに保存しました！" : "Notion連携は設定されていません"}`
           });
         } else {
-          const userState = userStates.get(userId);
-          userState.currentData = fullData;
-          userState.editMode = false;
-          userState.editField = null;
-          userState.timestamp = Date.now();
+          console.log("ユーザーIDが見つからないため、処理結果を送信できません");
         }
-        
-        // 確認メッセージを送信
-        await client.pushMessage(userId, createFinalConfirmMessage(fullData));
         
         // 一時ファイルの削除
         fs.unlinkSync(tempFilePath);
@@ -880,311 +867,436 @@ async function processImageAsync(messageId) {
       }
     });
   } catch (error) {
-    console.error('画像処理開始エラー:', error);
+    console.error('非同期処理エラー:', error);
   }
 }
 
-// 画像からデータを抽出する関数（OCR.space APIを使用）
+// OCR.space APIを使用して画像からテキストを抽出
 async function extractDataFromImage(imagePath) {
-  console.log(`OCR処理: ${imagePath}`);
-  
-  try {
-    const formData = new FormData();
-    formData.append('file', fs.createReadStream(imagePath));
-    formData.append('apikey', OCR_API_KEY);
-    formData.append('language', 'jpn');
-    formData.append('isOverlayRequired', 'false');
-    formData.append('detectOrientation', 'true');
-    formData.append('scale', 'true');
-    formData.append('OCREngine', '2'); // より高精度なエンジン
-    
-    const response = await axios.post('https://api.ocr.space/parse/image', formData, {
-      headers: {
-        ...formData.getHeaders(),
-      },
-      maxContentLength: Infinity,
-      maxBodyLength: Infinity,
-    });
-    
-    console.log("OCR API レスポンス:", JSON.stringify(response.data, null, 2));
-    
-    if (response.data.IsErroredOnProcessing) {
-      throw new Error(`OCRエラー: ${response.data.ErrorMessage}`);
-    }
-    
-    if (!response.data.ParsedResults || response.data.ParsedResults.length === 0) {
-      throw new Error('OCR結果が空です');
-    }
-    
-    const text = response.data.ParsedResults[0].ParsedText;
-    console.log("抽出されたテキスト:", text);
-    
-    // PayPayのレシートから情報を抽出
-    return parsePayPayReceipt(text);
-  } catch (error) {
-    console.error('OCRエラー:', error);
-    throw new Error(`OCR処理に失敗しました: ${error.message}`);
-  }
-}
-
-// PayPayレシートのテキストを解析する関数
-function parsePayPayReceipt(text) {
-  console.log("PayPayレシート解析開始");
-  
-  let storeName = '不明';
-  let amount = '0';
-  let date = getCurrentDate();
-  
-  // 改行で分割
-  const lines = text.split('\n').map(line => line.trim()).filter(line => line);
-  
-  // 金額の抽出 (¥や円などの記号の近くの数字を探す)
-  const amountRegex = /[\-¥￥][\s]*?([0-9,]+)/g;
-  const amountMatches = [];
-  let match;
-  
-  while ((match = amountRegex.exec(text)) !== null) {
-    amountMatches.push(match[1].replace(/,/g, ''));
-  }
-  
-  // 最も大きな金額を選択（支払い額と想定）
-  if (amountMatches.length > 0) {
-    amount = Math.max(...amountMatches.map(num => parseInt(num, 10))).toString();
-  }
-  
-  // 店名を抽出（通常は最初の数行に含まれる）
-  for (let i = 0; i < Math.min(5, lines.length); i++) {
-    // 店舗名と思われる行（数字やPayPayなどの特定ワードを含まない行）
-    if (
-      lines[i].length > 1 && 
-      !/^[0-9¥￥\-]+$/.test(lines[i]) && 
-      !lines[i].includes('PayPay') && 
-      !lines[i].includes('paypay') &&
-      !lines[i].includes('決済') &&
-      !lines[i].includes('円')
-    ) {
-      storeName = lines[i];
-      break;
-    }
-  }
-  
-  // 日付を抽出
-  const dateRegex = /(\d{4}[年/\-]\d{1,2}[月/\-]\d{1,2}日?)|(\d{1,2}[月/\-]\d{1,2}日?)/;
-  const dateMatch = text.match(dateRegex);
-  
-  if (dateMatch) {
-    date = dateMatch[0].replace(/[年月]/g, '/').replace(/日/g, '');
-    // 年が含まれていない場合は現在の年を追加
-    if (!date.includes('/')) {
-      const currentYear = new Date().getFullYear();
-      date = `${currentYear}/${date}`;
-    }
-  }
-  
-  console.log(`抽出結果 - 店舗: ${storeName}, 金額: ${amount}, 日付: ${date}`);
-  return { storeName, amount, date };
-}
-
-// 現在の日付を「YYYY/MM/DD」形式で取得
-function getCurrentDate() {
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, '0');
-  const day = String(now.getDate()).padStart(2, '0');
-  return `${year}/${month}/${day}`;
-}
-
-// Gemini APIを使用して支払いのカテゴリを判定する関数
-async function categorizePayment(paymentData) {
-  try {
-    console.log("カテゴリ判定開始:", paymentData);
-    
-    const storeName = paymentData.storeName;
-    const amount = paymentData.amount;
-    
-    // カテゴリの候補
-    const categories = CATEGORIES;
-    
-    // Gemini APIへのプロンプト
-    const prompt = `
-以下の支払い情報に最も適したカテゴリを1つ選択してください。
-店舗名: ${storeName}
-金額: ${amount}円
-
-選択可能なカテゴリ: ${categories.join(', ')}
-
-最も適切なカテゴリのみを回答してください（理由は不要）。`;
-    
-    const response = await axios.post(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${GEMINI_API_KEY}`,
-      {
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: {
-          temperature: 0.2,
-          maxOutputTokens: 50,
+    try {
+      const formData = new FormData();
+      formData.append('language', 'jpn'); // 日本語
+      formData.append('isOverlayRequired', 'false');
+      formData.append('file', fs.createReadStream(imagePath));
+      formData.append('OCREngine', '2'); // より高度なOCRエンジン
+      // レシートに適した設定を追加
+      formData.append('scale', 'true'); // 高解像度対応
+      formData.append('detectOrientation', 'true'); // 向き検出
+      
+      console.log("OCR.space APIにリクエスト送信");
+      const response = await axios.post('https://api.ocr.space/parse/image', formData, {
+        headers: {
+          ...formData.getHeaders(),
+          'apikey': OCR_API_KEY,
         },
+      });
+      
+      console.log("OCR.space API応答:", JSON.stringify(response.data, null, 2));
+      
+      if (!response.data || !response.data.ParsedResults || response.data.ParsedResults.length === 0) {
+        throw new Error('OCR処理に失敗しました: ' + JSON.stringify(response.data));
       }
-    );
-    
-    console.log("Gemini API レスポンス:", JSON.stringify(response.data, null, 2));
-    
-    // レスポンスからテキストを抽出
-    let category = 'その他'; // デフォルト
-    
-    if (response.data && 
-        response.data.candidates && 
-        response.data.candidates[0] && 
-        response.data.candidates[0].content && 
-        response.data.candidates[0].content.parts && 
-        response.data.candidates[0].content.parts[0] && 
-        response.data.candidates[0].content.parts[0].text) {
       
-      const responseText = response.data.candidates[0].content.parts[0].text.trim();
+      const fullText = response.data.ParsedResults[0].ParsedText || '';
+      console.log('抽出されたテキスト:', fullText);
       
-      // カテゴリリストと照合して最も近いものを選択
-      for (const cat of categories) {
-        if (responseText.includes(cat)) {
-          category = cat;
+      // 画像タイプを判定（PayPayかレシートか）
+      const isPayPay = fullText.includes('PayPay') || 
+                       fullText.includes('支払い先') || 
+                       fullText.includes('に支払い');
+      
+      let result = {};
+      
+      if (isPayPay) {
+        // 既存のPayPay画面からの抽出ロジック
+        result = extractPayPayData(fullText);
+      } else {
+        // レシートからの抽出ロジック
+        result = extractReceiptData(fullText);
+      }
+      
+      // 共通の後処理
+      result.rawText = fullText;
+      
+      console.log("抽出結果:", result);
+      return result;
+    } catch (error) {
+      console.error('テキスト抽出エラー:', error);
+      return {
+        storeName: '読み取りエラー',
+        amount: '0',
+        date: new Date().toISOString().split('T')[0],
+        rawText: error.message
+      };
+    }
+  }
+  
+  // PayPay画面からデータを抽出する関数
+  function extractPayPayData(fullText) {
+    const storeNameMatch = fullText.match(/支払い先[:：]\s*(.+?)(?:\n|$)/i) || 
+                          fullText.match(/(.+?)に支払い/i) ||
+                          fullText.match(/(.+?)に支払/i) ||
+                          fullText.match(/(.+?)に支/i) ||
+                          fullText.match(/(.+?)\s*店舗/i) ||
+                          fullText.match(/店舗名[:：]\s*(.+?)(?:\n|$)/i);
+    
+    const amountMatch = fullText.match(/([0-9,]+)円/i) ||
+                        fullText.match(/合計¥([0-9,]+)/i) ||
+                        fullText.match(/支払金額[:：]\s*([0-9,]+)/i) ||
+                        fullText.match(/金額[:：]\s*([0-9,]+)/i);
+    
+    // PayPay特有の日時形式を追加（「2023年4月7日 10時25分39秒」など）
+    const dateMatch = fullText.match(/(\d{4})年(\d{1,2})月(\d{1,2})日\s+\d{1,2}時\d{1,2}分\d{1,2}秒/i) ||
+                      fullText.match(/(\d{4})年(\d{1,2})月(\d{1,2})日/i) ||
+                      fullText.match(/(\d{4}[/-]\d{1,2}[/-]\d{1,2})/i) || 
+                      fullText.match(/(\d{1,2}[/-]\d{1,2}\s+\d{1,2}:\d{2})/i) ||
+                      fullText.match(/日時[:：]\s*(.+?)(?:\n|$)/i);
+    
+    let dateStr = new Date().toISOString().split('T')[0]; // デフォルト値
+    
+    if (dateMatch) {
+      if (dateMatch[0].includes('年') && dateMatch.length >= 4) {
+        // 「2023年4月7日 10時25分39秒」のようなフォーマット
+        const year = dateMatch[1];
+        const month = dateMatch[2].padStart(2, '0');
+        const day = dateMatch[3].padStart(2, '0');
+        dateStr = `${year}-${month}-${day}`;
+      } else if (dateMatch[1] && dateMatch[1].includes('/')) {
+        // スラッシュ区切りの日付
+        const parts = dateMatch[1].split('/');
+        if (parts.length >= 3) {
+          // YYYY/MM/DD形式
+          dateStr = parts[0].length === 4 
+            ? `${parts[0]}-${parts[1].padStart(2, '0')}-${parts[2].padStart(2, '0')}` 
+            : dateStr;
+        }
+      } else if (dateMatch[1]) {
+        // その他の形式
+        dateStr = dateMatch[1];
+      }
+    }
+    
+    console.log(`抽出された日付: ${dateStr}`);
+    
+    return {
+      storeName: storeNameMatch ? storeNameMatch[1].trim() : '不明',
+      amount: amountMatch ? amountMatch[1].replace(/,/g, '') : '0',
+      date: dateStr
+    };
+  }
+  
+  // レシートからデータを抽出する関数
+  function extractReceiptData(fullText) {
+    // レシートの店舗名は通常、最初の数行に表示される
+    const lines = fullText.split('\n').filter(line => line.trim().length > 0);
+    let storeName = '不明';
+    
+    // 店舗名の候補として最初の3行を考慮
+    if (lines.length > 0) {
+      // 明らかに店舗名でないパターンを除外
+      const nonStorePatterns = [
+        /領収書/i, /レシート/i, /receipt/i, /電話/i, /TEL/i, 
+        /^\d+$/, /合計/, /^\s*$/
+      ];
+      
+      for (let i = 0; i < Math.min(3, lines.length); i++) {
+        const isNonStore = nonStorePatterns.some(pattern => pattern.test(lines[i]));
+        if (!isNonStore && lines[i].length > 1) {
+          storeName = lines[i].trim();
           break;
         }
       }
     }
     
-    console.log(`カテゴリ判定結果: ${category}`);
-    return category;
-  } catch (error) {
-    console.error('カテゴリ判定エラー:', error);
-    return 'その他'; // エラー時はデフォルトカテゴリを返す
-  }
+    // 金額の抽出 (レシートでは通常「合計」「小計」「お会計」などの近くに表示)
+    let amount = '0';
+    const totalPatterns = [
+      /(?:合計|小計|お会計)\s*[:：]?\s*(?:¥|￥)?\s*(\d[\d,]*)/i
+    ];
+
+    for (const pattern of totalPatterns) {
+      const match = fullText.match(pattern);
+      if (match && match[1]) { 
+        amount = match[1].replace(/,/g, ''); // カンマを削除
+        break;
+      }
 }
 
-// Notionデータベースに新しいエントリを追加する関数
-async function addToNotion(data, category) {
-  console.log("Notionへのデータ追加開始:", data);
-  
-  try {
-    // 日付文字列をISO形式に変換
-    let dateValue;
-    try {
-      // YYYY/MM/DD形式の日付を解析
-      const dateParts = data.date.split('/');
-      if (dateParts.length === 3) {
-        const year = parseInt(dateParts[0]);
-        const month = parseInt(dateParts[1]) - 1; // JavaScriptの月は0始まり
-        const day = parseInt(dateParts[2]);
-        
-        const dateObj = new Date(year, month, day);
-        dateValue = dateObj.toISOString().split('T')[0];
-      } else {
-        // 形式が異なる場合は現在の日付を使用
-        dateValue = new Date().toISOString().split('T')[0];
+console.log(`抽出された金額: ${amount}`);
+
+    
+    // 日付の抽出
+    const datePatterns = [
+      /(\d{4})[年/.-](\d{1,2})[月/.-](\d{1,2})/i,
+      /(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})/i,
+      /(\d{1,2})[/.-](\d{1,2})[/.-](\d{2})/i,
+      /日付\s*[:：]?\s*(.+?)(?:\n|$)/i,
+      /(\d{4})年(\d{1,2})月(\d{1,2})日/i
+    ];
+    
+    let dateStr = new Date().toISOString().split('T')[0]; // デフォルト値
+    
+    for (const pattern of datePatterns) {
+      const match = fullText.match(pattern);
+      if (match) {
+        // パターンに応じた日付フォーマットの処理
+        if (match[0].includes('日付')) {
+          dateStr = match[1];
+        } else if (match.length >= 4) {
+          // フォーマットが YYYY/MM/DD
+          if (match[1].length === 4) {
+            dateStr = `${match[1]}-${match[2].padStart(2, '0')}-${match[3].padStart(2, '0')}`;
+          } 
+          // フォーマットが DD/MM/YYYY
+          else if (match[3].length === 4) {
+            dateStr = `${match[3]}-${match[2].padStart(2, '0')}-${match[1].padStart(2, '0')}`;
+          }
+          // フォーマットが DD/MM/YY
+          else if (match[3].length === 2) {
+            const year = parseInt(match[3]) < 50 ? `20${match[3]}` : `19${match[3]}`;
+            dateStr = `${year}-${match[2].padStart(2, '0')}-${match[1].padStart(2, '0')}`;
+          }
+        }
+        break;
       }
-    } catch (e) {
-      console.error("日付解析エラー:", e);
-      dateValue = new Date().toISOString().split('T')[0];
     }
     
-    const response = await notion.pages.create({
-      parent: {
+    return {
+      storeName: storeName,
+      amount: amount,
+      date: dateStr
+    };
+  }
+
+// 支払いのカテゴリを判定する関数
+async function categorizePayment(extractedData) {
+    try {
+      if (GEMINI_API_KEY) {
+        const prompt = `
+        以下の支払い情報から、最も適切なカテゴリを以下の中から一つだけ選んでください：
+        「コンビニ」「食品」「日用品」「雑貨」「服飾」「学習」「娯楽」「その他」
+        
+        店舗名: ${extractedData.storeName}
+        金額: ${extractedData.amount}円
+        日付: ${extractedData.date}
+        
+        例えば、以下のような店舗は次のカテゴリに分類します：
+        - ファストフード店（マクドナルド、モスバーガー、ケンタッキーなど）→「食品」
+        - コンビニ（セブンイレブン、ローソン、ファミリーマートなど）→「コンビニ」
+        - 飲食店、レストラン、カフェ →「食品」
+        - 薬局、ドラッグストア →「日用品」
+        - 書店、文房具店 →「学習」
+        - 衣料品店、アパレルショップ →「服飾」
+        - 映画館、ゲームセンター →「娯楽」
+        
+        カテゴリ名だけを返してください。特別な記号や説明は不要です。
+        `;
+        
+        //http...の部分は，Google AI SutuioのAPI取得ページにある，「クイックスタートガイド」付近に(使用できる)最新モデルが含まれた文字列がある．
+        console.log("Gemini Flash APIにリクエスト送信");
+        const response = await axios.post(
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`,
+          {
+            contents: [{
+              parts: [{
+                text: prompt
+              }]
+            }]
+          }
+        );
+   
+        console.log("Gemini API応答:", JSON.stringify(response.data, null, 2));
+        
+        // レスポンスからカテゴリを抽出
+        if (response.data && 
+            response.data.candidates && 
+            response.data.candidates.length > 0 && 
+            response.data.candidates[0].content && 
+            response.data.candidates[0].content.parts && 
+            response.data.candidates[0].content.parts.length > 0) {
+          
+          const generatedText = response.data.candidates[0].content.parts[0].text.trim();
+          console.log("Gemini生成テキスト:", generatedText);
+          
+          // カテゴリ文字列の完全一致を試みる（Geminiに単語だけを返すよう指示しているため）
+          const categories = ['コンビニ', '食品', '日用品', '雑貨', '服飾', '学習', '娯楽', 'その他'];
+          
+          // まず完全一致を試す
+          if (categories.includes(generatedText)) {
+            console.log(`カテゴリの完全一致: ${generatedText}`);
+            return generatedText;
+          }
+          
+          // 次に部分一致を試す
+          const foundCategory = categories.find(cat => generatedText.includes(cat));
+          if (foundCategory) {
+            console.log(`カテゴリの部分一致: ${foundCategory}`);
+            return foundCategory;
+          }
+          
+          console.log(`認識できるカテゴリがないため「その他」とします。Gemini応答: ${generatedText}`);
+          return 'その他';
+        } else {
+          console.log("Gemini APIからの応答が不正な形式です");
+          return simpleCategorize(extractedData);
+        }
+      } else {
+        console.log("Gemini APIキーがないため、簡易分類を使用します");
+        return simpleCategorize(extractedData);
+      }
+    } catch (error) {
+      console.error('カテゴリ判定エラー:', error);
+      // エラーの詳細をログに記録
+      if (error.response) {
+        console.error('Gemini API エラーレスポンス:', error.response.data);
+      }
+      // バックアップ処理 - 簡易分類を使用
+      return simpleCategorize(extractedData);
+    }
+  }
+  
+  // 店舗名に基づく簡易分類（フォールバック用）
+  function simpleCategorize(extractedData) {
+    const storeLower = extractedData.storeName.toLowerCase();
+    
+    // 一般的な飲食店のパターンを追加
+    const foodPatterns = [
+      'バーガー', 'マクドナルド', 'モス', 'ケンタッキー', '松屋', '吉野家',
+      'すき家', 'マック', '牛丼', 'ラーメン', '定食', 'レストラン', '食堂',
+      'カフェ', '喫茶', 'パン', 'ベーカリー', '和食', '中華', 'イタリアン'
+    ];
+    
+    // 食品関連の店舗チェック
+    if (foodPatterns.some(pattern => storeLower.includes(pattern))) {
+      return '食品';
+    }
+    
+    // 以下は元のコードと同じ
+    if (storeLower.includes('ローソン') ||
+        storeLower.includes('ファミリーマート') ||
+        storeLower.includes('セイコーマート') ||
+        storeLower.includes('セブン-イレブン') ||
+        storeLower.includes('セブンイレブン')) {
+      return 'コンビニ';
+    } else if (storeLower.includes('マート') || 
+               storeLower.includes('スーパー') || 
+               storeLower.includes('食品') || 
+               storeLower.includes('レストラン') ||
+               storeLower.includes('カフェ') ||
+               storeLower.includes('自販機') ||
+               storeLower.includes('ラルズ') ||
+               storeLower.includes('購買') ||
+               storeLower.includes('食堂')) {
+      return '食品';
+    } else if (storeLower.includes('富士薬品') ||
+               storeLower.includes('ツルハ')) {
+      return '日用品';
+    } else if (storeLower.includes('ハンズ') || 
+               storeLower.includes('アピア') ||
+               storeLower.includes('札幌ステラプレイス')) {
+      return '雑貨';
+    } else if (storeLower.includes('服') || 
+               storeLower.includes('ファッション') ||
+               storeLower.includes('アパレル') ||
+               storeLower.includes('ユニクロ') ||
+               storeLower.includes('衣料')) {
+      return '服飾';
+    } else if (storeLower.includes('書店') || 
+               storeLower.includes('大学') ||
+               storeLower.includes('学校') || 
+               storeLower.includes('塾') ||
+               storeLower.includes('本') ||
+               storeLower.includes('セミナー')) {
+      return '学習';
+    } else if (storeLower.includes('ＤＬｓｉｔｅ') ||
+               storeLower.includes('コミック') ||
+               storeLower.includes('とらコイン') ||
+               storeLower.includes('Cherry Merry') ||
+               storeLower.includes('ボールパーク')) {
+      return '娯楽';
+    } 
+    
+    return 'その他';
+  }
+
+// Notionデータベースに情報を追加する関数（重複チェック機能付き）
+async function addToNotion(extractedData, category) {
+    try {
+      if (!NOTION_DATABASE_ID) {
+        console.log("Notion DATABASE IDが設定されていないため、追加をスキップします");
+        return false;
+      }
+      
+      // 同じデータが既に存在するか確認
+      const existingEntries = await notion.databases.query({
         database_id: NOTION_DATABASE_ID,
-      },
-      properties: {
-        'Name': {
-          title: [
+        filter: {
+          and: [
             {
-              text: {
-                content: data.storeName || '不明な店舗',
-              },
+              property: "名前",
+              title: {
+                equals: extractedData.storeName
+              }
             },
-          ],
-        },
-        '金額': {
-          number: parseInt(data.amount) || 0,
-        },
-        '日付': {
-          date: {
-            start: dateValue,
-          },
-        },
-        'カテゴリ': {
-          select: {
-            name: category || 'その他',
-          },
-        },
-      },
-    });
-    
-    console.log("Notion追加成功:", response.id);
-    return true;
-  } catch (error) {
-    console.error('Notion追加エラー:', error);
-    return false;
-  }
-}
-
-// Notionの既存ページを更新する関数
-async function updateNotion(pageId, data, category) {
-  console.log(`Notionページ更新開始: ${pageId}`, data);
-  
-  try {
-    // 日付文字列をISO形式に変換
-    let dateValue;
-    try {
-      // YYYY/MM/DD形式の日付を解析
-      const dateParts = data.date.split('/');
-      if (dateParts.length === 3) {
-        const year = parseInt(dateParts[0]);
-        const month = parseInt(dateParts[1]) - 1; // JavaScriptの月は0始まり
-        const day = parseInt(dateParts[2]);
-        
-        const dateObj = new Date(year, month, day);
-        dateValue = dateObj.toISOString().split('T')[0];
-      } else {
-        // 形式が異なる場合は現在の日付を使用
-        dateValue = new Date().toISOString().split('T')[0];
+            {
+              property: "金額",
+              number: {
+                equals: parseInt(extractedData.amount, 10) || 0
+              }
+            },
+            {
+              property: "日付",
+              date: {
+                equals: extractedData.date
+              }
+            }
+          ]
+        }
+      });
+      
+      // 既に存在する場合はスキップ
+      if (existingEntries.results.length > 0) {
+        console.log('同じデータが既に存在します。追加をスキップします。');
+        return true;
       }
-    } catch (e) {
-      console.error("日付解析エラー:", e);
-      dateValue = new Date().toISOString().split('T')[0];
+      
+      console.log("Notion APIにリクエスト送信");
+      await notion.pages.create({
+        parent: { database_id: NOTION_DATABASE_ID },
+        properties: {
+          名前: {
+            title: [
+              {
+                text: {
+                  content: extractedData.storeName
+                }
+              }
+            ]
+          },
+          金額: {
+            number: parseInt(extractedData.amount, 10) || 0
+          },
+          日付: {
+            date: {
+              start: extractedData.date
+            }
+          },
+          カテゴリ: {
+            select: {
+              name: category
+            }
+          }
+        }
+      });
+      
+      console.log('Notionに追加しました');
+      return true;
+    } catch (error) {
+      console.error('Notion追加エラー:', error);
+      return false;
     }
-    
-    const response = await notion.pages.update({
-      page_id: pageId,
-      properties: {
-        'Name': {
-          title: [
-            {
-              text: {
-                content: data.storeName || '不明な店舗',
-              },
-            },
-          ],
-        },
-        '金額': {
-          number: parseInt(data.amount) || 0,
-        },
-        '日付': {
-          date: {
-            start: dateValue,
-          },
-        },
-        'カテゴリ': {
-          select: {
-            name: category || 'その他',
-          },
-        },
-      },
-    });
-    
-    console.log("Notion更新成功:", response.id);
-    return true;
-  } catch (error) {
-    console.error('Notion更新エラー:', error);
-    return false;
   }
-}
 
-// アプリケーションの起動
 app.listen(PORT, () => {
-  console.log(`サーバーが起動しました: ポート ${PORT}`);
+  console.log(`Server running at port ${PORT}`);
 });
