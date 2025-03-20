@@ -27,7 +27,7 @@ const NOTION_DATABASE_ID = process.env.NOTION_DATABASE_ID || "1bacb4ce-5b9e-8052
 const OCR_API_KEY = process.env.OCR_API_KEY || "K85126819088957"; // 無料利用枠のデモキー
 
 // Gemini API設定
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "AIzaSyBH8isJ333x0riocYGZG80BJEiyZeRi-Co";
 
 const app = express();
 
@@ -295,7 +295,8 @@ async function extractDataFromImage(imagePath) {
                           fullText.match(/(.+?)\s*店舗/i) ||
                           fullText.match(/店舗名[:：]\s*(.+?)(?:\n|$)/i);
     
-    const amountMatch = fullText.match(/([0-9,]+)円/i) || 
+    const amountMatch = fullText.match(/([0-9,]+)円/i) ||
+                        fullText.match(/合計¥([0-9,]+)/i) ||
                         fullText.match(/支払金額[:：]\s*([0-9,]+)/i) ||
                         fullText.match(/金額[:：]\s*([0-9,]+)/i);
     
@@ -329,7 +330,7 @@ async function categorizePayment(extractedData) {
     if (GEMINI_API_KEY) {
       const prompt = `
       以下の支払い情報から、最も適切なカテゴリを以下の4つから一つだけ選んでください：
-      「食品」「服飾」「学習」「その他」「コンビニ」
+      「コンビニ」「食品」「日用品」「雑貨」「服飾」「学習」「娯楽」「その他」
       
       店舗名: ${extractedData.storeName}
       金額: ${extractedData.amount}円
@@ -356,8 +357,8 @@ async function categorizePayment(extractedData) {
       // レスポンスからカテゴリを抽出
       const generatedText = response.data.candidates[0].content.parts[0].text;
       
-      // カテゴリ文字列の抽出（「食品」「服飾」「学習」「その他」「コンビニ」のいずれかを抽出）
-      const categories = ['食品', '服飾', '学習', 'その他', 'コンビニ'];
+      // カテゴリ文字列の抽出（「コンビニ」「食品」「日用品」「雑貨」「服飾」「学習」「娯楽」「その他」のいずれかを抽出）
+      const categories = ['コンビニ', '食品', '日用品', '雑貨', '服飾', '学習', '娯楽', 'その他'];
       const category = categories.find(cat => generatedText.includes(cat)) || 'その他';
       
       return category;
@@ -376,16 +377,32 @@ async function categorizePayment(extractedData) {
 function simpleCategorizeBySrore(storeName) {
   const storeLower = storeName.toLowerCase();
   
-  if (storeLower.includes('マート') || 
-      storeLower.includes('スーパー') || 
-      storeLower.includes('食品') || 
-      storeLower.includes('レストラン') ||
-      storeLower.includes('カフェ') ||
-      storeLower.includes('食堂')) {
+  if (storeLower.includes('ローソン') ||
+      storeLower.includes('ファミリーマート') ||
+      storeLower.includes('セイコーマート') ||
+      storeLower.includes('セブン-イレブン')) {
+    return 'コンビニ';
+  } else if (storeLower.includes('マート') || 
+             storeLower.includes('スーパー') || 
+             storeLower.includes('食品') || 
+             storeLower.includes('レストラン') ||
+             storeLower.includes('カフェ') ||
+             storeLower.includes('自販機') ||
+             storeLower.includes('ラルズ') ||
+             storeLower.includes('購買') ||
+             storeLower.includes('食堂')) {
     return '食品';
+  } else if (storeLower.includes('富士薬品') ||
+             storeLower.includes('ツルハ')) {
+    return '日用品';
+  } else if (storeLower.includes('ハンズ') || 
+             storeLower.includes('アピア') ||
+             storeLower.includes('札幌ステラプレイス')) {
+    return '雑貨';
   } else if (storeLower.includes('服') || 
              storeLower.includes('ファッション') ||
              storeLower.includes('アパレル') ||
+             storeLower.includes('ユニクロ') ||
              storeLower.includes('衣料')) {
     return '服飾';
   } else if (storeLower.includes('書店') || 
@@ -395,12 +412,13 @@ function simpleCategorizeBySrore(storeName) {
              storeLower.includes('本') ||
              storeLower.includes('セミナー')) {
     return '学習';
-  } else if (storeLower.includes('ローソン') ||
-             storeLower.includes('ファミリーマート') ||
-             storeLower.includes('セイコーマート') ||
-             storeLower.includes('セブン-イレブン')) {
-    return 'コンビニ'
-  }  return 'その他';
+  } else if (storeLower.includes('ＤＬｓｉｔｅ') ||
+             storeLower.includes('コミック') ||
+             storeLower.includes('とらコイン') ||
+             storeLower.includes('Cherry Merry') ||
+             storeLower.includes('ボールパーク')) {
+    return '娯楽';
+  } return 'その他';
 }
 
 // Notionデータベースに情報を追加する関数（重複チェック機能付き）
