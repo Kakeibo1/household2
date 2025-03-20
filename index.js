@@ -295,107 +295,80 @@ function simpleCategorizeBySrore(storeName) {
   return 'その他';
 }
 
-// Notionデータベースに情報を追加する関数
+// Notionデータベースに情報を追加する関数（重複チェック機能付き）
 async function addToNotion(extractedData, category) {
-  try {
-    if (!NOTION_DATABASE_ID) {
-      console.log("Notion DATABASE IDが設定されていないため、追加をスキップします");
-      return false;
-    }
-    
-    console.log("Notion APIにリクエスト送信");
-    await notion.pages.create({
-      parent: { database_id: NOTION_DATABASE_ID },
-      properties: {
-        名前: {
-          title: [
+    try {
+      if (!NOTION_DATABASE_ID) {
+        console.log("Notion DATABASE IDが設定されていないため、追加をスキップします");
+        return false;
+      }
+      
+      // 同じデータが既に存在するか確認
+      const existingEntries = await notion.databases.query({
+        database_id: NOTION_DATABASE_ID,
+        filter: {
+          and: [
             {
-              text: {
-                content: extractedData.storeName
+              property: "名前",
+              title: {
+                equals: extractedData.storeName
+              }
+            },
+            {
+              property: "金額",
+              number: {
+                equals: parseInt(extractedData.amount, 10) || 0
+              }
+            },
+            {
+              property: "日付",
+              date: {
+                equals: extractedData.date
               }
             }
           ]
-        },
-        金額: {
-          number: parseInt(extractedData.amount, 10) || 0
-        },
-        日付: {
-          date: {
-            start: extractedData.date
-          }
-        },
-        カテゴリ: {
-          select: {
-            name: category
+        }
+      });
+      
+      // 既に存在する場合はスキップ
+      if (existingEntries.results.length > 0) {
+        console.log('同じデータが既に存在します。追加をスキップします。');
+        return true;
+      }
+      
+      console.log("Notion APIにリクエスト送信");
+      await notion.pages.create({
+        parent: { database_id: NOTION_DATABASE_ID },
+        properties: {
+          名前: {
+            title: [
+              {
+                text: {
+                  content: extractedData.storeName
+                }
+              }
+            ]
+          },
+          金額: {
+            number: parseInt(extractedData.amount, 10) || 0
+          },
+          日付: {
+            date: {
+              start: extractedData.date
+            }
+          },
+          カテゴリ: {
+            select: {
+              name: category
+            }
           }
         }
-      }
-    });
-    
-    console.log('Notionに追加しました');
-    return true;
-  } catch (error) {
-    console.error('Notion追加エラー:', error);
-    return false;
-  }
-}
-
-app.listen(PORT, () => {
-  console.log(`Server running at port ${PORT}`);
-});
-
-
-
-async function addToNotion(extractedData, category) {
-  try {
-    if (!NOTION_DATABASE_ID) {
-      console.log("Notion DATABASE IDが設定されていないため、追加をスキップします");
+      });
+      
+      console.log('Notionに追加しました');
+      return true;
+    } catch (error) {
+      console.error('Notion追加エラー:', error);
       return false;
     }
-    
-    // 同じデータが既に存在するか確認
-    const existingEntries = await notion.databases.query({
-      database_id: NOTION_DATABASE_ID,
-      filter: {
-        and: [
-          {
-            property: "名前",
-            title: {
-              equals: extractedData.storeName
-            }
-          },
-          {
-            property: "金額",
-            number: {
-              equals: parseInt(extractedData.amount, 10) || 0
-            }
-          },
-          {
-            property: "日付",
-            date: {
-              equals: extractedData.date
-            }
-          }
-        ]
-      }
-    });
-    
-    // 既に存在する場合はスキップ
-    if (existingEntries.results.length > 0) {
-      console.log('同じデータが既に存在します。追加をスキップします。');
-      return true;
-    }
-    
-    // 以下、既存の追加処理...
-    console.log("Notion APIにリクエスト送信");
-    await notion.pages.create({
-      // ...
-    });
-    
-    console.log('Notionに追加しました');
-    return true;
-  } catch (error) {
-    console.log('Notion追加エラー:', error);
-    return false;
   }
-}
