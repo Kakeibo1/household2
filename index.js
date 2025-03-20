@@ -47,6 +47,15 @@ const processedMessages = new Map();
 // キー: メッセージID, 値: {userId: ユーザーID, timestamp: 保存時間}
 const messageUserMap = new Map();
 
+// ユーザーの状態を管理するためのMap
+// キー: ユーザーID, 値: {
+//   currentData: {storeName, amount, date, category}, 
+//   editMode: boolean, 
+//   editField: string,
+//   notionPageId: string (編集時のみ)
+// }
+const userStates = new Map();
+
 // 処理済みメッセージの保持期間(ミリ秒)
 const MESSAGE_RETENTION_PERIOD = 60 * 60 * 1000; // 1時間
 
@@ -65,6 +74,13 @@ setInterval(() => {
   for (const [messageId, data] of messageUserMap.entries()) {
     if (now - data.timestamp > MESSAGE_RETENTION_PERIOD) {
       messageUserMap.delete(messageId);
+    }
+  }
+  
+  // 古いユーザー状態の掃除（1時間以上更新がないものを削除）
+  for (const [userId, data] of userStates.entries()) {
+    if (data.timestamp && now - data.timestamp > MESSAGE_RETENTION_PERIOD) {
+      userStates.delete(userId);
     }
   }
 }, 30 * 60 * 1000); // 30分ごとに掃除
@@ -86,6 +102,16 @@ app.post("/webhook", line.middleware(config), (req, res) => {
   
   // すべてのイベントに対して重複チェックを行い、処理済みなら無視する
   const events = req.body.events.filter(event => {
+    // ポストバックとテキスト編集モードは常に処理する
+    if (event.type === "postback") return true;
+    
+    if (event.type === "message" && event.message.type === "text") {
+      const userId = event.source.userId;
+      if (userStates.has(userId) && userStates.get(userId).editMode) {
+        return true; // 編集モード中のテキストメッセージは常に処理
+      }
+    }
+    
     if (event.type !== "message") return true; // メッセージ以外はそのまま処理
     
     const messageId = event.message.id;
@@ -126,14 +152,28 @@ app.get('/ping', (req, res) => {
   res.send('pong');
 });
 
+// カテゴリ一覧（修正オプション用）
+const CATEGORIES = ['コンビニ', '食品', '日用品', '雑貨', '服飾', '学習', '娯楽', 'その他'];
+
 async function handleEvent(event) {
   console.log("イベント処理開始:", JSON.stringify(event));
+  const userId = event.source.userId;
+  
+  // ポストバックイベントの処理
+  if (event.type === "postback") {
+    return handlePostback(event);
+  }
   
   if (event.type !== "message") {
     return Promise.resolve(null);
   }
 
-  // テキストメッセージの処理
+  // 編集モード中のテキスト入力の処理
+  if (event.message.type === "text" && userStates.has(userId) && userStates.get(userId).editMode) {
+    return handleEditModeText(event);
+  }
+
+  // 通常のテキストメッセージの処理
   if (event.message.type === "text") {
     let mes = { type: "text", text: "テキストメッセージを受け取りました。PayPayのスクリーンショットを送信してください。" };
     return client.replyMessage(event.replyToken, mes);
@@ -161,6 +201,574 @@ async function handleEvent(event) {
   }
   
   return Promise.resolve(null);
+}
+
+// ポストバックイベントの処理
+async function handlePostback(event) {
+  const userId = event.source.userId;
+  const data = event.postback.data;
+  
+  console.log(`ポストバック受信: ${data} from ${userId}`);
+  
+  // 確認ダイアログの応答処理
+  if (data.startsWith('action=')) {
+    const action = data.split('=')[1];
+    
+    if (action === 'modify') {
+      // 修正モードを開始
+      if (userStates.has(userId) && userStates.get(userId).currentData) {
+        const userState = userStates.get(userId);
+        userState.editMode = true;
+        userState.timestamp = Date.now();
+        
+        // 修正フィールド選択メニューを表示
+        return client.replyMessage(event.replyToken, {
+          type: "flex",
+          altText: "修正項目を選択してください",
+          contents: {
+            type: "bubble",
+            body: {
+              type: "box",
+              layout: "vertical",
+              contents: [
+                {
+                  type: "text",
+                  text: "修正する項目を選択してください",
+                  weight: "bold",
+                  size: "md"
+                }
+              ]
+            },
+            footer: {
+              type: "box",
+              layout: "vertical",
+              spacing: "sm",
+              contents: [
+                {
+                  type: "button",
+                  style: "primary",
+                  action: {
+                    type: "postback",
+                    label: "店舗名",
+                    data: "edit=storeName"
+                  }
+                },
+                {
+                  type: "button",
+                  style: "primary",
+                  action: {
+                    type: "postback",
+                    label: "金額",
+                    data: "edit=amount"
+                  }
+                },
+                {
+                  type: "button",
+                  style: "primary",
+                  action: {
+                    type: "postback",
+                    label: "カテゴリ",
+                    data: "edit=category"
+                  }
+                },
+                {
+                  type: "button",
+                  style: "secondary",
+                  action: {
+                    type: "postback",
+                    label: "キャンセル",
+                    data: "edit=cancel"
+                  }
+                }
+              ]
+            }
+          }
+        });
+      } else {
+        return client.replyMessage(event.replyToken, {
+          type: "text",
+          text: "修正するデータがありません。先に画像を送信してください。"
+        });
+      }
+    } else if (action === 'save') {
+      // データを保存して完了
+      if (userStates.has(userId) && userStates.get(userId).currentData) {
+        const userState = userStates.get(userId);
+        const extractedData = userState.currentData;
+        
+        try {
+          // Notionに保存
+          if (NOTION_DATABASE_ID) {
+            let saved = false;
+            
+            // 既存ページの更新（編集モードで、notionPageIdがある場合）
+            if (userState.notionPageId) {
+              saved = await updateNotion(userState.notionPageId, extractedData, extractedData.category);
+            } else {
+              // 新規作成
+              saved = await addToNotion(extractedData, extractedData.category);
+            }
+            
+            return client.replyMessage(event.replyToken, {
+              type: "text",
+              text: saved 
+                ? "データを保存しました！" 
+                : "保存に失敗しました。もう一度試してください。"
+            });
+          } else {
+            return client.replyMessage(event.replyToken, {
+              type: "text",
+              text: "Notion連携が設定されていないため、保存できません。"
+            });
+          }
+        } finally {
+          // 処理完了後、ユーザー状態をリセット
+          userState.editMode = false;
+          userState.editField = null;
+          userState.notionPageId = null;
+        }
+      } else {
+        return client.replyMessage(event.replyToken, {
+          type: "text",
+          text: "保存するデータがありません。先に画像を送信してください。"
+        });
+      }
+    }
+  }
+  
+  // 編集フィールドの選択処理
+  else if (data.startsWith('edit=')) {
+    const field = data.split('=')[1];
+    
+    if (field === 'cancel') {
+      // 編集モードをキャンセル
+      if (userStates.has(userId)) {
+        const userState = userStates.get(userId);
+        userState.editMode = false;
+        userState.editField = null;
+      }
+      
+      return client.replyMessage(event.replyToken, {
+        type: "text",
+        text: "修正をキャンセルしました。"
+      });
+    }
+    
+    if (userStates.has(userId) && userStates.get(userId).currentData) {
+      const userState = userStates.get(userId);
+      userState.editField = field;
+      userState.timestamp = Date.now();
+      
+      if (field === 'category') {
+        // カテゴリ選択メニューを表示
+        return client.replyMessage(event.replyToken, createCategoryMenu());
+      } else {
+        // テキスト入力を促す
+        const fieldName = field === 'storeName' ? '店舗名' : '金額';
+        const currentValue = field === 'storeName' 
+          ? userState.currentData.storeName 
+          : userState.currentData.amount;
+        
+        return client.replyMessage(event.replyToken, {
+          type: "text",
+          text: `新しい${fieldName}を入力してください。\n現在の値: ${currentValue}`
+        });
+      }
+    } else {
+      return client.replyMessage(event.replyToken, {
+        type: "text",
+        text: "修正するデータがありません。先に画像を送信してください。"
+      });
+    }
+  }
+  
+  // カテゴリ選択の処理
+  else if (data.startsWith('category=')) {
+    const category = data.split('=')[1];
+    
+    if (userStates.has(userId) && userStates.get(userId).editMode) {
+      const userState = userStates.get(userId);
+      userState.currentData.category = category;
+      userState.timestamp = Date.now();
+      
+      // 更新後のデータを表示し、保存確認
+      return client.replyMessage(event.replyToken, createConfirmationMessage(userState.currentData));
+    } else {
+      return client.replyMessage(event.replyToken, {
+        type: "text",
+        text: "カテゴリを選択できませんでした。もう一度試してください。"
+      });
+    }
+  }
+  
+  return Promise.resolve(null);
+}
+
+// 編集モード中のテキスト入力を処理
+async function handleEditModeText(event) {
+  const userId = event.source.userId;
+  const text = event.message.text;
+  
+  if (userStates.has(userId) && userStates.get(userId).editMode && userStates.get(userId).editField) {
+    const userState = userStates.get(userId);
+    const field = userState.editField;
+    
+    // 入力値を対応するフィールドに設定
+    if (field === 'storeName') {
+      userState.currentData.storeName = text;
+    } else if (field === 'amount') {
+      // 数値以外の文字を取り除く
+      const numericValue = text.replace(/[^0-9]/g, '');
+      userState.currentData.amount = numericValue || '0';
+    }
+    
+    userState.timestamp = Date.now();
+    userState.editField = null; // 編集フィールドをリセット
+    
+    // 更新後のデータを表示し、保存確認
+    return client.replyMessage(event.replyToken, createConfirmationMessage(userState.currentData));
+  }
+  
+  return Promise.resolve(null);
+}
+
+// カテゴリ選択メニューを作成
+function createCategoryMenu() {
+  const buttons = CATEGORIES.map(category => ({
+    type: "button",
+    style: "primary",
+    action: {
+      type: "postback",
+      label: category,
+      data: `category=${category}`
+    },
+    color: getCategoryColor(category)
+  }));
+  
+  return {
+    type: "flex",
+    altText: "カテゴリを選択してください",
+    contents: {
+      type: "bubble",
+      body: {
+        type: "box",
+        layout: "vertical",
+        contents: [
+          {
+            type: "text",
+            text: "カテゴリを選択してください",
+            weight: "bold",
+            size: "md"
+          }
+        ]
+      },
+      footer: {
+        type: "box",
+        layout: "vertical",
+        spacing: "sm",
+        contents: buttons
+      }
+    }
+  };
+}
+
+// カテゴリに応じた色を返す
+function getCategoryColor(category) {
+  const colorMap = {
+    'コンビニ': "#5F9EA0",
+    '食品': "#FF6347",
+    '日用品': "#6495ED",
+    '雑貨': "#DDA0DD",
+    '服飾': "#FFD700",
+    '学習': "#32CD32",
+    '娯楽': "#FF69B4",
+    'その他': "#A9A9A9"
+  };
+  
+  return colorMap[category] || "#A9A9A9";
+}
+
+// 確認メッセージを作成
+function createConfirmationMessage(data) {
+  return {
+    type: "flex",
+    altText: "情報を確認して保存してください",
+    contents: {
+      type: "bubble",
+      header: {
+        type: "box",
+        layout: "vertical",
+        contents: [
+          {
+            type: "text",
+            text: "以下の内容で保存しますか？",
+            weight: "bold",
+            size: "md"
+          }
+        ]
+      },
+      body: {
+        type: "box",
+        layout: "vertical",
+        contents: [
+          {
+            type: "box",
+            layout: "horizontal",
+            contents: [
+              {
+                type: "text",
+                text: "店舗:",
+                size: "sm",
+                color: "#555555",
+                flex: 2
+              },
+              {
+                type: "text",
+                text: data.storeName,
+                size: "sm",
+                color: "#111111",
+                flex: 4,
+                wrap: true
+              }
+            ]
+          },
+          {
+            type: "box",
+            layout: "horizontal",
+            contents: [
+              {
+                type: "text",
+                text: "金額:",
+                size: "sm",
+                color: "#555555",
+                flex: 2
+              },
+              {
+                type: "text",
+                text: `${parseInt(data.amount).toLocaleString()}円`,
+                size: "sm",
+                color: "#111111",
+                flex: 4
+              }
+            ],
+            margin: "md"
+          },
+          {
+            type: "box",
+            layout: "horizontal",
+            contents: [
+              {
+                type: "text",
+                text: "日付:",
+                size: "sm",
+                color: "#555555",
+                flex: 2
+              },
+              {
+                type: "text",
+                text: data.date,
+                size: "sm",
+                color: "#111111",
+                flex: 4
+              }
+            ],
+            margin: "md"
+          },
+          {
+            type: "box",
+            layout: "horizontal",
+            contents: [
+              {
+                type: "text",
+                text: "分類:",
+                size: "sm",
+                color: "#555555",
+                flex: 2
+              },
+              {
+                type: "text",
+                text: data.category,
+                size: "sm",
+                color: "#111111",
+                flex: 4
+              }
+            ],
+            margin: "md"
+          }
+        ]
+      },
+      footer: {
+        type: "box",
+        layout: "horizontal",
+        spacing: "sm",
+        contents: [
+          {
+            type: "button",
+            style: "primary",
+            action: {
+              type: "postback",
+              label: "保存する",
+              data: "action=save"
+            }
+          },
+          {
+            type: "button",
+            style: "secondary",
+            action: {
+              type: "postback",
+              label: "修正する",
+              data: "action=modify"
+            }
+          }
+        ]
+      }
+    }
+  };
+}
+
+// 決定確認メッセージを作成
+function createFinalConfirmMessage(data) {
+  return {
+    type: "flex",
+    altText: "修正する必要はありますか？",
+    contents: {
+      type: "bubble",
+      body: {
+        type: "box",
+        layout: "vertical",
+        contents: [
+          {
+            type: "text",
+            text: "読み取り結果",
+            weight: "bold",
+            size: "xl",
+            margin: "md"
+          },
+          {
+            type: "box",
+            layout: "vertical",
+            margin: "lg",
+            spacing: "sm",
+            contents: [
+              {
+                type: "box",
+                layout: "horizontal",
+                contents: [
+                  {
+                    type: "text",
+                    text: "店舗:",
+                    size: "sm",
+                    color: "#555555",
+                    flex: 2
+                  },
+                  {
+                    type: "text",
+                    text: data.storeName,
+                    size: "sm",
+                    color: "#111111",
+                    flex: 4,
+                    wrap: true
+                  }
+                ]
+              },
+              {
+                type: "box",
+                layout: "horizontal",
+                contents: [
+                  {
+                    type: "text",
+                    text: "金額:",
+                    size: "sm",
+                    color: "#555555",
+                    flex: 2
+                  },
+                  {
+                    type: "text",
+                    text: `${parseInt(data.amount).toLocaleString()}円`,
+                    size: "sm",
+                    color: "#111111",
+                    flex: 4
+                  }
+                ]
+              },
+              {
+                type: "box",
+                layout: "horizontal",
+                contents: [
+                  {
+                    type: "text",
+                    text: "日付:",
+                    size: "sm",
+                    color: "#555555",
+                    flex: 2
+                  },
+                  {
+                    type: "text",
+                    text: data.date,
+                    size: "sm",
+                    color: "#111111",
+                    flex: 4
+                  }
+                ]
+              },
+              {
+                type: "box",
+                layout: "horizontal",
+                contents: [
+                  {
+                    type: "text",
+                    text: "分類:",
+                    size: "sm",
+                    color: "#555555",
+                    flex: 2
+                  },
+                  {
+                    type: "text",
+                    text: data.category,
+                    size: "sm",
+                    color: "#111111",
+                    flex: 4
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            type: "text",
+            text: "上記の内容で正しいですか？",
+            margin: "xxl",
+            size: "md",
+            weight: "bold"
+          }
+        ]
+      },
+      footer: {
+        type: "box",
+        layout: "horizontal",
+        spacing: "sm",
+        contents: [
+          {
+            type: "button",
+            style: "primary",
+            action: {
+              type: "postback",
+              label: "保存する",
+              data: "action=save"
+            }
+          },
+          {
+            type: "button",
+            style: "secondary",
+            action: {
+              type: "postback",
+              label: "修正する",
+              data: "action=modify"
+            }
+          }
+        ]
+      }
+    }
+  };
 }
 
 // メッセージIDからユーザーIDを取得する関数
