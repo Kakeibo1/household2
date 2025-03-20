@@ -291,7 +291,7 @@ async function extractDataFromImage(imagePath) {
     
     // PayPayの画面から情報を抽出するロジック
     const storeNameMatch = fullText.match(/支払い先[:：]\s*(.+?)(?:\n|$)/i) || 
-                          fullText.match(/(.+?)に支払い/i) ||
+                          fullText.match(/(.+?)に支払いました/i) ||
                           fullText.match(/(.+?)\s*店舗/i) ||
                           fullText.match(/店舗名[:：]\s*(.+?)(?:\n|$)/i);
     
@@ -329,7 +329,7 @@ async function categorizePayment(extractedData) {
     if (GEMINI_API_KEY) {
       const prompt = `
       以下の支払い情報から、最も適切なカテゴリを以下の4つから一つだけ選んでください：
-      「食品」「服飾」「学習」「その他」
+      「食品」「服飾」「学習」「その他」「コンビニ」
       
       店舗名: ${extractedData.storeName}
       金額: ${extractedData.amount}円
@@ -356,8 +356,8 @@ async function categorizePayment(extractedData) {
       // レスポンスからカテゴリを抽出
       const generatedText = response.data.candidates[0].content.parts[0].text;
       
-      // カテゴリ文字列の抽出（「食品」「服飾」「学習」「その他」のいずれかを抽出）
-      const categories = ['食品', '服飾', '学習', 'その他'];
+      // カテゴリ文字列の抽出（「食品」「服飾」「学習」「その他」「コンビニ」のいずれかを抽出）
+      const categories = ['食品', '服飾', '学習', 'その他', 'コンビニ'];
       const category = categories.find(cat => generatedText.includes(cat)) || 'その他';
       
       return category;
@@ -381,8 +381,7 @@ function simpleCategorizeBySrore(storeName) {
       storeLower.includes('食品') || 
       storeLower.includes('レストラン') ||
       storeLower.includes('カフェ') ||
-      storeLower.includes('食堂') ||
-      storeLower.includes('コンビニ')) {
+      storeLower.includes('食堂')) {
     return '食品';
   } else if (storeLower.includes('服') || 
              storeLower.includes('ファッション') ||
@@ -396,8 +395,12 @@ function simpleCategorizeBySrore(storeName) {
              storeLower.includes('本') ||
              storeLower.includes('セミナー')) {
     return '学習';
-  }
-  return 'その他';
+  } else if (storeLower.includes('ローソン') ||
+             storeLower.includes('ファミリーマート') ||
+             storeLower.includes('セイコーマート') ||
+             storeLower.includes('セブン-イレブン')) {
+    return 'コンビニ'
+  }  return 'その他';
 }
 
 // Notionデータベースに情報を追加する関数（重複チェック機能付き）
