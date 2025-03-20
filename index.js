@@ -295,6 +295,52 @@ function simpleCategorizeBySrore(storeName) {
   return 'その他';
 }
 
+
+// Notionデータベースに情報を追加する関数
+async function addToNotion(extractedData, category) {
+  try {
+    if (!NOTION_DATABASE_ID) {
+      console.log("Notion DATABASE IDが設定されていないため、追加をスキップします");
+      return false;
+    }
+    
+    console.log("Notion APIにリクエスト送信");
+    await notion.pages.create({
+      parent: { database_id: NOTION_DATABASE_ID },
+      properties: {
+        名前: {
+          title: [
+            {
+              text: {
+                content: extractedData.storeName
+              }
+            }
+          ]
+        },
+        金額: {
+          number: parseInt(extractedData.amount, 10) || 0
+        },
+        日付: {
+          date: {
+            start: extractedData.date
+          }
+        },
+        カテゴリ: {
+          select: {
+            name: category
+          }
+        }
+      }
+    });
+    
+    console.log('Notionに追加しました');
+    return true;
+  } catch (error) {
+    console.error('Notion追加エラー:', error);
+    return false;
+  }
+}
+
 app.listen(PORT, () => {
   console.log(`Server running at port ${PORT}`);
 });
