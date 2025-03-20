@@ -372,7 +372,6 @@ async function extractDataFromImage(imagePath) {
     }
     
     // 金額の抽出 (レシートでは通常「合計」「小計」「お会計」などの近くに表示)
-    // 金額の抽出 (レシートでは通常「合計」「小計」「お会計」などの近くに表示)
     let amount = '0';
     const totalPatterns = [
       /(?:合計|小計|お会計)\s*[:：]?\s*(?:¥|￥)?\s*(\d[\d,]*)/i
@@ -434,101 +433,153 @@ console.log(`抽出された金額: ${amount}`);
 
 // 支払いのカテゴリを判定する関数
 async function categorizePayment(extractedData) {
-  try {
-    if (GEMINI_API_KEY) {
-      const prompt = `
-      以下の支払い情報から、最も適切なカテゴリを以下の4つから一つだけ選んでください：
-      「コンビニ」「食品」「日用品」「雑貨」「服飾」「学習」「娯楽」「その他」
-      
-      店舗名: ${extractedData.storeName}
-      金額: ${extractedData.amount}円
-      日付: ${extractedData.date}
-      抽出テキスト: ${extractedData.rawText.substring(0, 200)}...
-      
-      カテゴリ名だけを返してください。
-      `;
-      
-      console.log("Gemini APIにリクエスト送信");
-      const response = await axios.post(
-        `https://generativelanguage.googleapis.com/v1/models/gemini-pro:generateContent?key=${GEMINI_API_KEY}`,
-        {
-          contents: [{
-            parts: [{
-              text: prompt
+    try {
+      if (GEMINI_API_KEY) {
+        const prompt = `
+        以下の支払い情報から、最も適切なカテゴリを以下の中から一つだけ選んでください：
+        「コンビニ」「食品」「日用品」「雑貨」「服飾」「学習」「娯楽」「その他」
+        
+        店舗名: ${extractedData.storeName}
+        金額: ${extractedData.amount}円
+        日付: ${extractedData.date}
+        
+        例えば、以下のような店舗は次のカテゴリに分類します：
+        - ファストフード店（マクドナルド、モスバーガー、ケンタッキーなど）→「食品」
+        - コンビニ（セブンイレブン、ローソン、ファミリーマートなど）→「コンビニ」
+        - 飲食店、レストラン、カフェ →「食品」
+        - 薬局、ドラッグストア →「日用品」
+        - 書店、文房具店 →「学習」
+        - 衣料品店、アパレルショップ →「服飾」
+        - 映画館、ゲームセンター →「娯楽」
+        
+        カテゴリ名だけを返してください。特別な記号や説明は不要です。
+        `;
+        
+        console.log("Gemini APIにリクエスト送信");
+        const response = await axios.post(
+          `https://generativelanguage.googleapis.com/v1/models/gemini-pro:generateContent?key=${GEMINI_API_KEY}`,
+          {
+            contents: [{
+              parts: [{
+                text: prompt
+              }]
             }]
-          }]
+          }
+        );
+        
+        console.log("Gemini API応答:", JSON.stringify(response.data, null, 2));
+        
+        // レスポンスからカテゴリを抽出
+        if (response.data && 
+            response.data.candidates && 
+            response.data.candidates.length > 0 && 
+            response.data.candidates[0].content && 
+            response.data.candidates[0].content.parts && 
+            response.data.candidates[0].content.parts.length > 0) {
+          
+          const generatedText = response.data.candidates[0].content.parts[0].text.trim();
+          console.log("Gemini生成テキスト:", generatedText);
+          
+          // カテゴリ文字列の完全一致を試みる（Geminiに単語だけを返すよう指示しているため）
+          const categories = ['コンビニ', '食品', '日用品', '雑貨', '服飾', '学習', '娯楽', 'その他'];
+          
+          // まず完全一致を試す
+          if (categories.includes(generatedText)) {
+            console.log(`カテゴリの完全一致: ${generatedText}`);
+            return generatedText;
+          }
+          
+          // 次に部分一致を試す
+          const foundCategory = categories.find(cat => generatedText.includes(cat));
+          if (foundCategory) {
+            console.log(`カテゴリの部分一致: ${foundCategory}`);
+            return foundCategory;
+          }
+          
+          console.log(`認識できるカテゴリがないため「その他」とします。Gemini応答: ${generatedText}`);
+          return 'その他';
+        } else {
+          console.log("Gemini APIからの応答が不正な形式です");
+          return simpleCategorize(extractedData);
         }
-      );
-      
-      console.log("Gemini API応答:", JSON.stringify(response.data, null, 2));
-      
-      // レスポンスからカテゴリを抽出
-      const generatedText = response.data.candidates[0].content.parts[0].text;
-      
-      // カテゴリ文字列の抽出（「コンビニ」「食品」「日用品」「雑貨」「服飾」「学習」「娯楽」「その他」のいずれかを抽出）
-      const categories = ['コンビニ', '食品', '日用品', '雑貨', '服飾', '学習', '娯楽', 'その他'];
-      const category = categories.find(cat => generatedText.includes(cat)) || 'その他';
-      
-      return category;
-    } else {
-      console.log("Gemini APIキーがないため、簡易分類を使用します");
-      return simpleCategorizeBySrore(extractedData.storeName);
+      } else {
+        console.log("Gemini APIキーがないため、簡易分類を使用します");
+        return simpleCategorize(extractedData);
+      }
+    } catch (error) {
+      console.error('カテゴリ判定エラー:', error);
+      // エラーの詳細をログに記録
+      if (error.response) {
+        console.error('Gemini API エラーレスポンス:', error.response.data);
+      }
+      // バックアップ処理 - 簡易分類を使用
+      return simpleCategorize(extractedData);
     }
-  } catch (error) {
-    console.error('カテゴリ判定エラー:', error);
-    // バックアップ処理 - 店舗名に基づく簡易分類
-    return simpleCategorizeBySrore(extractedData.storeName);
   }
-}
-
-// 店舗名に基づく簡易分類
-function simpleCategorizeBySrore(storeName) {
-  const storeLower = storeName.toLowerCase();
   
-  if (storeLower.includes('ローソン') ||
-      storeLower.includes('ファミリーマート') ||
-      storeLower.includes('セイコーマート') ||
-      storeLower.includes('セブン-イレブン')) {
-    return 'コンビニ';
-  } else if (storeLower.includes('マート') || 
-             storeLower.includes('スーパー') || 
-             storeLower.includes('食品') || 
-             storeLower.includes('レストラン') ||
-             storeLower.includes('カフェ') ||
-             storeLower.includes('自販機') ||
-             storeLower.includes('ラルズ') ||
-             storeLower.includes('購買') ||
-             storeLower.includes('食堂')) {
-    return '食品';
-  } else if (storeLower.includes('富士薬品') ||
-             storeLower.includes('ドラッグストア')
-             storeLower.includes('ツルハ')) {
-    return '日用品';
-  } else if (storeLower.includes('ハンズ') || 
-             storeLower.includes('アピア') ||
-             storeLower.includes('札幌ステラプレイス')) {
-    return '雑貨';
-  } else if (storeLower.includes('服') || 
-             storeLower.includes('ファッション') ||
-             storeLower.includes('アパレル') ||
-             storeLower.includes('ユニクロ') ||
-             storeLower.includes('衣料')) {
-    return '服飾';
-  } else if (storeLower.includes('書店') || 
-             storeLower.includes('大学') ||
-             storeLower.includes('学校') || 
-             storeLower.includes('塾') ||
-             storeLower.includes('本') ||
-             storeLower.includes('セミナー')) {
-    return '学習';
-  } else if (storeLower.includes('ＤＬｓｉｔｅ') ||
-             storeLower.includes('コミック') ||
-             storeLower.includes('とらコイン') ||
-             storeLower.includes('Cherry Merry') ||
-             storeLower.includes('ボールパーク')) {
-    return '娯楽';
-  } return 'その他';
-}
+  // 店舗名に基づく簡易分類（フォールバック用）
+  function simpleCategorize(extractedData) {
+    const storeLower = extractedData.storeName.toLowerCase();
+    
+    // 一般的な飲食店のパターンを追加
+    const foodPatterns = [
+      'バーガー', 'マクドナルド', 'モス', 'ケンタッキー', '松屋', '吉野家',
+      'すき家', 'マック', '牛丼', 'ラーメン', '定食', 'レストラン', '食堂',
+      'カフェ', '喫茶', 'パン', 'ベーカリー', '和食', '中華', 'イタリアン'
+    ];
+    
+    // 食品関連の店舗チェック
+    if (foodPatterns.some(pattern => storeLower.includes(pattern))) {
+      return '食品';
+    }
+    
+    // 以下は元のコードと同じ
+    if (storeLower.includes('ローソン') ||
+        storeLower.includes('ファミリーマート') ||
+        storeLower.includes('セイコーマート') ||
+        storeLower.includes('セブン-イレブン') ||
+        storeLower.includes('セブンイレブン')) {
+      return 'コンビニ';
+    } else if (storeLower.includes('マート') || 
+               storeLower.includes('スーパー') || 
+               storeLower.includes('食品') || 
+               storeLower.includes('レストラン') ||
+               storeLower.includes('カフェ') ||
+               storeLower.includes('自販機') ||
+               storeLower.includes('ラルズ') ||
+               storeLower.includes('購買') ||
+               storeLower.includes('食堂')) {
+      return '食品';
+    } else if (storeLower.includes('富士薬品') ||
+               storeLower.includes('ツルハ')) {
+      return '日用品';
+    } else if (storeLower.includes('ハンズ') || 
+               storeLower.includes('アピア') ||
+               storeLower.includes('札幌ステラプレイス')) {
+      return '雑貨';
+    } else if (storeLower.includes('服') || 
+               storeLower.includes('ファッション') ||
+               storeLower.includes('アパレル') ||
+               storeLower.includes('ユニクロ') ||
+               storeLower.includes('衣料')) {
+      return '服飾';
+    } else if (storeLower.includes('書店') || 
+               storeLower.includes('大学') ||
+               storeLower.includes('学校') || 
+               storeLower.includes('塾') ||
+               storeLower.includes('本') ||
+               storeLower.includes('セミナー')) {
+      return '学習';
+    } else if (storeLower.includes('ＤＬｓｉｔｅ') ||
+               storeLower.includes('コミック') ||
+               storeLower.includes('とらコイン') ||
+               storeLower.includes('Cherry Merry') ||
+               storeLower.includes('ボールパーク')) {
+      return '娯楽';
+    } 
+    
+    return 'その他';
+  }
 
 // Notionデータベースに情報を追加する関数（重複チェック機能付き）
 async function addToNotion(extractedData, category) {
