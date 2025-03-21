@@ -4,16 +4,3 @@ services:
     env: node
     buildCommand: npm install
     startCommand: node index.js
-    envVars:
-      - key: LINE_CHANNEL_SECRET
-        value: f98fb6d050f9b926faa02d39b4c4bfdb
-      - key: LINE_CHANNEL_ACCESS_TOKEN
-        value: uarH4rkiU4K3/1EEFbsrcm6MSOu5CvVaeVA+oqv2MIgtXakPJV8y1PgbLL9LbDV6XV8nnFkbv3+Yt9oq7cvCRVwddcbE2qKSeXqjHn+Ek0JIWWI96UnC91b0pTBaDw9Ehj5mGfXl49CE+TMu6QtI7gdB04t89/1O/w1cDnyilFU=
-      - key: NOTION_API_KEY
-        value: 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
-      - key: NOTION_DATABASE_ID
-        value: 1bacb4ce5b9e805294b3d06d5d282f51
-      - key: GEMINI_API_KEY
-        sync: false
-      - key: OCR_API_KEY
-        value: K85126819088957
