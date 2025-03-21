@@ -13,21 +13,21 @@ const PORT = process.env.PORT || 5000;
 
 // LINE Bot設定
 const config = {
-    channelSecret: process.env.LINE_CHANNEL_SECRET || "162400cfc8a09a24918e963c5f2cd27b",
-    channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN || "AS8xkZaKSKh9OjFDXHI8zCo4VXIBH6+cDEICFBi5vPgnsy6QOfD7ia88+Fb/Jjm/yqV8U3KFqDnA+qxcfU477fPuvFJAXVRGpZ75w64HvuxFVeeQkUreKmw+js+vHTkbEgI8zuBjGpskQ7EtJ/SWdwdB04t89/1O/w1cDnyilFU="
+    channelSecret: process.env.LINE_CHANNEL_SECRET,
+    channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN
 };
 
 // Notion設定
 const notion = new Client({
-    auth: process.env.NOTION_API_KEY || "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"
+    auth: process.env.NOTION_API_KEY
 });
-const NOTION_DATABASE_ID = process.env.NOTION_DATABASE_ID || "1bacb4ce-5b9e-8052-94b3-d06d5d282f51";
+const NOTION_DATABASE_ID = process.env.NOTION_DATABASE_ID;
 
 // OCR.space APIキー
-const OCR_API_KEY = process.env.OCR_API_KEY || "K85126819088957"; // 無料利用枠のデモキー
+const OCR_API_KEY = process.env.OCR_API_KEY; // 無料利用枠のデモキー
 
 // Gemini API設定
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "AIzaSyBH8isJ333x0riocYGZG80BJEiyZeRi-Co";
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
 const app = express();
 
