@@ -292,9 +292,10 @@ async function extractDataFromImage(imagePath) {
       const fullText = response.data.ParsedResults[0].ParsedText || '';
       console.log('抽出されたテキスト:', fullText);
       
-      // 画像タイプを判定（PayPayかレシートか）
+      // 画像タイプを判定（PayPay・生協かレシートか）
       const isPayPay = fullText.includes('PayPay') || 
-                       fullText.includes('支払い先') || 
+                       fullText.includes('支払い先') ||
+                       fullText.includes('ご利用単価') ||
                        fullText.includes('に支払い');
       
       let result = {};
@@ -331,6 +332,7 @@ async function extractDataFromImage(imagePath) {
                           fullText.match(/(.+?)に支/i) ||
                           fullText.match(/(.+?)\s*店舗/i) ||
                           fullText.match(/ご利用店舗\s*([^\n]+)/i) ||
+                          fullText.match(/(.+?)購買/i) ||
                           fullText.match(/店舗名[:：]\s*(.+?)(?:\n|$)/i);
     
     const amountMatch = fullText.match(/([0-9,]+)円/i) ||
@@ -580,7 +582,7 @@ async function categorizePayment(extractedData) {
                storeLower.includes('カフェ') ||
                storeLower.includes('自販機') ||
                storeLower.includes('ラルズ') ||
-               storeLower.includes('購買') ||
+               storeLower.includes('生協') ||
                storeLower.includes('食堂')) {
       return '食品';
     } else if (storeLower.includes('富士薬品') ||
