@@ -180,10 +180,10 @@ async function processImageAsync(messageId) {
     // LINE Messaging APIから画像を取得
     console.log("画像メッセージID:", messageId);
     const stream = await client.getMessageContent(messageId);
-  let chunks = [];
+    let chunks = [];
     
     stream.on('data', (chunk) => {
-    chunks.push(chunk);
+      chunks.push(chunk);
     });
     
     stream.on('end', async () => {
@@ -292,9 +292,9 @@ async function extractDataFromImage(imagePath) {
       const fullText = response.data.ParsedResults[0].ParsedText || '';
       console.log('抽出されたテキスト:', fullText);
       
-      // 画像タイプを判定（PayPay・生協かレシートか）
+      // 画像タイプを判定（PayPayかレシートか）
       const isPayPay = fullText.includes('PayPay') || 
-                       fullText.includes('支払い先') ||
+                       fullText.includes('支払い先') || 
                        fullText.includes('ご利用単価') ||
                        fullText.includes('に支払い');
       
@@ -324,59 +324,55 @@ async function extractDataFromImage(imagePath) {
     }
   }
   
-  // PayPayと生協の履歴画面からデータを抽出する関数
-  function extractPayPayData(fullText) {
-    const storeNameMatch = fullText.match(/支払い先[:：]\s*(.+?)(?:\n|$)/i) || 
-    fullText.match(/(.+?)に支払い/i) ||
-    fullText.match(/(.+?)に支払/i) ||
-    fullText.match(/(.+?)に支/i) ||
-    fullText.match(/(.+?)購買/i) ||
-    fullText.match(/店舗名[:：]\s*(.+?)(?:\n|$)/i);
-
-    let storeName = storeNameMatch ? storeNameMatch[1].trim() : "";
-
-    // 「北海道大学」「東北大学」などの大学名を除外
-    storeName = storeName.replace(/^.*?生協/, "生協");
-
-    // 出力
-    console.log(storeName);
-
-    
-    const amountMatch = fullText.match(/([0-9,]+)円/i) ||
-                        fullText.match(/合計¥([0-9,]+)/i) ||
-                        fullText.match(/支払金額[:：]\s*([0-9,]+)/i) ||
-                        fullText.match(/ご利用単価\s*([\d,]+)円/i) ||
-                        fullText.match(/金額[:：]\s*([0-9,]+)/i);
-    
-    // PayPay特有の日時形式を追加（「2023年4月7日 10時25分39秒」など）
-      const dateMatch = fullText.match(/(\d{4})年(\d{1,2})月(\d{1,2})日\s+\d{1,2}時\d{1,2}分\d{1,2}秒/i) ||
-                        fullText.match(/(\d{4})年(\d{1,2})月(\d{1,2})日/i) ||
-                        fullText.match(/(\d{4})[/-](\d{1,2})[/-](\d{1,2})/i) || 
-                        fullText.match(/(\d{4})\.(\d{1,2})\.(\d{1,2})/) ||  // 修正：2024.06.12 に対応
-                        fullText.match(/(\d{1,2}[/-]\d{1,2}\s+\d{1,2}:\d{2})/i) ||
-                        fullText.match(/日時[:：]\s*(\d{4}年\d{1,2}月\d{1,2}日)/i);
-      
-      let dateStr = new Date().toISOString().split('T')[0]; // デフォルト値をセット
-
-      if (dateMatch) {
-          if (dateMatch[0].includes('年') && dateMatch.length >= 4) {
-              const year = dateMatch[1];
-              const month = dateMatch[2].padStart(2, '0');
-              const day = dateMatch[3].padStart(2, '0');
-              dateStr = `${year}-${month}-${day}`;
-          }
+// PayPay画面からデータを抽出する関数
+function extractPayPayData(fullText) {
+  const storeNameMatch = fullText.match(/支払い先[:：]\s*(.+?)(?:\n|$)/i) || 
+                        fullText.match(/(.+?)に支払い/i) ||
+                        fullText.match(/(.+?)に支払/i) ||
+                        fullText.match(/(.+?)に支/i) ||
+                        fullText.match(/(.+?)購買/i) ||
+                        fullText.match(/店舗名[:：]\s*(.+?)(?:\n|$)/i);
+  
+  const amountMatch = fullText.match(/([0-9,]+)円/i) ||
+                      fullText.match(/合計¥([0-9,]+)/i) ||
+                      fullText.match(/支払金額[:：]\s*([0-9,]+)/i) ||
+                      fullText.match(/金額[:：]\s*([0-9,]+)/i);
+  
+  // PayPay特有の日時形式を追加
+  const dateMatch = fullText.match(/(\d{4})年(\d{1,2})月(\d{1,2})日\s+\d{1,2}時\d{1,2}分\d{1,2}秒/i) ||
+                    fullText.match(/(\d{4})年(\d{1,2})月(\d{1,2})日/i) ||
+                    fullText.match(/(\d{4}[/-]\d{1,2}[/-]\d{1,2})/i) || 
+                    fullText.match(/(\d{1,2}[/-]\d{1,2}\s+\d{1,2}:\d{2})/i) ||
+                    fullText.match(/(\d{4})\.(\d{1,2})\.(\d{1,2})/) ||  // 追加: 2024.06.15 形式
+                    fullText.match(/日時[:：]\s*(.+?)(?:\n|$)/i);
+  
+  let dateStr = new Date().toISOString().split('T')[0]; // デフォルト値
+  
+  if (dateMatch) {
+      if (dateMatch[1] && dateMatch[2] && dateMatch[3]) {
+          // 年月日がそれぞれ抽出できた場合
+          const year = dateMatch[1];
+          const month = dateMatch[2].padStart(2, '0');
+          const day = dateMatch[3].padStart(2, '0');
+          dateStr = `${year}-${month}-${day}`;
+      } else if (dateMatch[1]) {
+          // その他の形式 (YYYY-MM-DD や YYYY/MM/DD など)
+          dateStr = dateMatch[1].replace(/\//g, '-').replace(/\./g, '-'); // スラッシュやドットをハイフンに変換
       }
-      
   }
+  
+  console.log(`抽出された日付: ${dateStr}`);
+  
+  return {
+    storeName: storeNameMatch ? storeNameMatch[1].trim() : '不明',
+    amount: amountMatch ? amountMatch[1].replace(/,/g, '') : '0',
+    date: dateStr
+  };
+}
 
-  console.log("抽出した日付:", dateStr);
-  
-    return {
-      storeName: storeNameMatch ? storeNameMatch[1].trim() : '不明',
-      amount: amountMatch ? amountMatch[1].replace(/,/g, '') : '0',
-      date: dateStr
-    };
-  
+// テスト
+console.log(extractPayPayData("2024.06.15"));
+
   
   // レシートからデータを抽出する関数
   function extractReceiptData(fullText) {
@@ -413,8 +409,8 @@ async function extractDataFromImage(imagePath) {
         amount = match[1].replace(/,/g, ''); // カンマを削除
         break;
       }
-    }
-  
+}
+
 console.log(`抽出された金額: ${amount}`);
 
     
@@ -595,7 +591,6 @@ async function categorizePayment(extractedData) {
                storeLower.includes('衣料')) {
       return '服飾';
     } else if (storeLower.includes('書店') || 
-               storeLower.includes('大学') ||
                storeLower.includes('学校') || 
                storeLower.includes('塾') ||
                storeLower.includes('本') ||
@@ -609,8 +604,8 @@ async function categorizePayment(extractedData) {
       return '娯楽';
     } 
     
-  return 'その他';
-    }
+    return 'その他';
+  }
 
 // Notionデータベースに情報を追加する関数（重複チェック機能付き）
 async function addToNotion(extractedData, category) {
