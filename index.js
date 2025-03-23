@@ -13,21 +13,21 @@ const PORT = process.env.PORT || 5000;
 
 // LINE Bot設定
 const config = {
-    channelSecret: process.env.LINE_CHANNEL_SECRET,
-    channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN
+    channelSecret: process.env.LINE_CHANNEL_SECRET || "162400cfc8a09a24918e963c5f2cd27b",
+    channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN || "AS8xkZaKSKh9OjFDXHI8zCo4VXIBH6+cDEICFBi5vPgnsy6QOfD7ia88+Fb/Jjm/yqV8U3KFqDnA+qxcfU477fPuvFJAXVRGpZ75w64HvuxFVeeQkUreKmw+js+vHTkbEgI8zuBjGpskQ7EtJ/SWdwdB04t89/1O/w1cDnyilFU="
 };
 
 // Notion設定
 const notion = new Client({
-    auth: process.env.NOTION_API_KEY
+    auth: process.env.NOTION_API_KEY || "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"
 });
-const NOTION_DATABASE_ID = process.env.NOTION_DATABASE_ID;
+const NOTION_DATABASE_ID = process.env.NOTION_DATABASE_ID || "1bacb4ce-5b9e-8052-94b3-d06d5d282f51";
 
 // OCR.space APIキー
-const OCR_API_KEY = process.env.OCR_API_KEY; // 無料利用枠のデモキー
+const OCR_API_KEY = process.env.OCR_API_KEY || "K85126819088957"; // 無料利用枠のデモキー
 
 // Gemini API設定
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "AIzaSyBH8isJ333x0riocYGZG80BJEiyZeRi-Co";
 
 const app = express();
 
@@ -323,18 +323,20 @@ async function extractDataFromImage(imagePath) {
     }
   }
   
-  // PayPay画面からデータを抽出する関数
+  // PayPayと生協の履歴画面からデータを抽出する関数
   function extractPayPayData(fullText) {
     const storeNameMatch = fullText.match(/支払い先[:：]\s*(.+?)(?:\n|$)/i) || 
                           fullText.match(/(.+?)に支払い/i) ||
                           fullText.match(/(.+?)に支払/i) ||
                           fullText.match(/(.+?)に支/i) ||
                           fullText.match(/(.+?)\s*店舗/i) ||
+                          fullText.match(/ご利用店舗\s*([^\n]+)/i) ||
                           fullText.match(/店舗名[:：]\s*(.+?)(?:\n|$)/i);
     
     const amountMatch = fullText.match(/([0-9,]+)円/i) ||
                         fullText.match(/合計¥([0-9,]+)/i) ||
                         fullText.match(/支払金額[:：]\s*([0-9,]+)/i) ||
+                        fullText.match(/ご利用単価\s*([\d,]+)円/i) ||
                         fullText.match(/金額[:：]\s*([0-9,]+)/i);
     
     // PayPay特有の日時形式を追加（「2023年4月7日 10時25分39秒」など）
@@ -342,6 +344,7 @@ async function extractDataFromImage(imagePath) {
                       fullText.match(/(\d{4})年(\d{1,2})月(\d{1,2})日/i) ||
                       fullText.match(/(\d{4}[/-]\d{1,2}[/-]\d{1,2})/i) || 
                       fullText.match(/(\d{1,2}[/-]\d{1,2}\s+\d{1,2}:\d{2})/i) ||
+                      fullText.match(/ご利用日時\s*(\d{4})\.(\d{2})\.(\d{2})/) ||
                       fullText.match(/日時[:：]\s*(.+?)(?:\n|$)/i);
     
     let dateStr = new Date().toISOString().split('T')[0]; // デフォルト値
