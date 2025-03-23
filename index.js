@@ -330,7 +330,6 @@ async function extractDataFromImage(imagePath) {
                           fullText.match(/(.+?)に支払い/i) ||
                           fullText.match(/(.+?)に支払/i) ||
                           fullText.match(/(.+?)に支/i) ||
-                          fullText.match(/(.+?)\s*店舗/i) ||
                           fullText.match(/ご利用店舗\s*([^\n]+)/i) ||
                           fullText.match(/(.+?)購買/i) ||
                           fullText.match(/店舗名[:：]\s*(.+?)(?:\n|$)/i);
@@ -346,7 +345,7 @@ async function extractDataFromImage(imagePath) {
                       fullText.match(/(\d{4})年(\d{1,2})月(\d{1,2})日/i) ||
                       fullText.match(/(\d{4}[/-]\d{1,2}[/-]\d{1,2})/i) || 
                       fullText.match(/(\d{1,2}[/-]\d{1,2}\s+\d{1,2}:\d{2})/i) ||
-                      fullText.match(/ご利用日時\s*(\d{4})\.(\d{2})\.(\d{2})/) ||
+                      fullText.match(/(\d{4})\.(\d{2})\.(\d{2})/) ||
                       fullText.match(/日時[:：]\s*(.+?)(?:\n|$)/i);
     
     let dateStr = new Date().toISOString().split('T')[0]; // デフォルト値
