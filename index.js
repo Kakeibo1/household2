@@ -369,7 +369,7 @@ async function extractDataFromImage(imagePath) {
       
   }
 
-    console.log(`抽出された日付: ${dateStr}`);
+  console.log("抽出した日付:", dateStr);
   
     return {
       storeName: storeNameMatch ? storeNameMatch[1].trim() : '不明',
