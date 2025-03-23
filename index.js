@@ -180,10 +180,10 @@ async function processImageAsync(messageId) {
     // LINE Messaging APIから画像を取得
     console.log("画像メッセージID:", messageId);
     const stream = await client.getMessageContent(messageId);
-    let chunks = [];
+  let chunks = [];
     
     stream.on('data', (chunk) => {
-      chunks.push(chunk);
+    chunks.push(chunk);
     });
     
     stream.on('end', async () => {
@@ -356,11 +356,10 @@ async function extractDataFromImage(imagePath) {
                         fullText.match(/(\d{1,2}[/-]\d{1,2}\s+\d{1,2}:\d{2})/i) ||
                         fullText.match(/日時[:：]\s*(\d{4}年\d{1,2}月\d{1,2}日)/i);
       
-      let dateStr = new Date().toISOString().split('T')[0]; // デフォルト値（今日の日付）
-  
+      let dateStr = new Date().toISOString().split('T')[0]; // デフォルト値をセット
+
       if (dateMatch) {
-          if (dateMatch[1] && dateMatch.length >= 4) {
-              // YYYY年MM月DD日 または YYYY/MM/DD, YYYY-MM-DD, YYYY.MM.DD の形式
+          if (dateMatch[0].includes('年') && dateMatch.length >= 4) {
               const year = dateMatch[1];
               const month = dateMatch[2].padStart(2, '0');
               const day = dateMatch[3].padStart(2, '0');
@@ -368,11 +367,10 @@ async function extractDataFromImage(imagePath) {
           }
       }
       
-      return dateStr;
   }
-    
+
     console.log(`抽出された日付: ${dateStr}`);
-    
+  
     return {
       storeName: storeNameMatch ? storeNameMatch[1].trim() : '不明',
       amount: amountMatch ? amountMatch[1].replace(/,/g, '') : '0',
@@ -415,8 +413,8 @@ async function extractDataFromImage(imagePath) {
         amount = match[1].replace(/,/g, ''); // カンマを削除
         break;
       }
-}
-
+    }
+  
 console.log(`抽出された金額: ${amount}`);
 
     
@@ -611,8 +609,8 @@ async function categorizePayment(extractedData) {
       return '娯楽';
     } 
     
-    return 'その他';
-  }
+  return 'その他';
+    }
 
 // Notionデータベースに情報を追加する関数（重複チェック機能付き）
 async function addToNotion(extractedData, category) {
