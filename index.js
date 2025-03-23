@@ -378,7 +378,7 @@ async function extractDataFromImage(imagePath) {
       amount: amountMatch ? amountMatch[1].replace(/,/g, '') : '0',
       date: dateStr
     };
-  }
+  
   
   // レシートからデータを抽出する関数
   function extractReceiptData(fullText) {
