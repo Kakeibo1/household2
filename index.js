@@ -369,10 +369,6 @@ function extractPayPayData(fullText) {
     date: dateStr
   };
 }
-
-// テスト
-console.log(extractPayPayData("2024.06.15"));
-
   
   // レシートからデータを抽出する関数
   function extractReceiptData(fullText) {
