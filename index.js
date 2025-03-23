@@ -327,11 +327,20 @@ async function extractDataFromImage(imagePath) {
   // PayPayと生協の履歴画面からデータを抽出する関数
   function extractPayPayData(fullText) {
     const storeNameMatch = fullText.match(/支払い先[:：]\s*(.+?)(?:\n|$)/i) || 
-                          fullText.match(/(.+?)に支払い/i) ||
-                          fullText.match(/(.+?)に支払/i) ||
-                          fullText.match(/(.+?)に支/i) ||
-                          fullText.match(/(.+?)購買/i) ||
-                          fullText.match(/店舗名[:：]\s*(.+?)(?:\n|$)/i);
+    fullText.match(/(.+?)に支払い/i) ||
+    fullText.match(/(.+?)に支払/i) ||
+    fullText.match(/(.+?)に支/i) ||
+    fullText.match(/(.+?)購買/i) ||
+    fullText.match(/店舗名[:：]\s*(.+?)(?:\n|$)/i);
+
+    let storeName = storeNameMatch ? storeNameMatch[1].trim() : "";
+
+    // 「北海道大学」「東北大学」などの大学名を除外
+    storeName = storeName.replace(/^.*?生協/, "生協");
+
+    // 出力
+    console.log(storeName);
+
     
     const amountMatch = fullText.match(/([0-9,]+)円/i) ||
                         fullText.match(/合計¥([0-9,]+)/i) ||
@@ -340,36 +349,27 @@ async function extractDataFromImage(imagePath) {
                         fullText.match(/金額[:：]\s*([0-9,]+)/i);
     
     // PayPay特有の日時形式を追加（「2023年4月7日 10時25分39秒」など）
-    const dateMatch = fullText.match(/(\d{4})年(\d{1,2})月(\d{1,2})日\s+\d{1,2}時\d{1,2}分\d{1,2}秒/i) ||
-                      fullText.match(/(\d{4})年(\d{1,2})月(\d{1,2})日/i) ||
-                      fullText.match(/(\d{4}[/-]\d{1,2}[/-]\d{1,2})/i) || 
-                      fullText.match(/(\d{1,2}[/-]\d{1,2}\s+\d{1,2}:\d{2})/i) ||
-                      fullText.match(/(\d{4})\.(\d{1,2})\.(\d{1,2})/) ||
-                      fullText.match(/日時[:：]\s*(.+?)(?:\n|$)/i);
-    
-    let dateStr = new Date().toISOString().split('T')[0]; // デフォルト値
-    
-    if (dateMatch) {
-      if (dateMatch[0].includes('年') && dateMatch.length >= 4) {
-        // 「2023年4月7日 10時25分39秒」のようなフォーマット
-        const year = dateMatch[1];
-        const month = dateMatch[2].padStart(2, '0');
-        const day = dateMatch[3].padStart(2, '0');
-        dateStr = `${year}-${month}-${day}`;
-      } else if (dateMatch[1] && dateMatch[1].includes('/')) {
-        // スラッシュ区切りの日付
-        const parts = dateMatch[1].split('/');
-        if (parts.length >= 3) {
-          // YYYY/MM/DD形式
-          dateStr = parts[0].length === 4 
-            ? `${parts[0]}-${parts[1].padStart(2, '0')}-${parts[2].padStart(2, '0')}` 
-            : dateStr;
-        }
-      } else if (dateMatch[1]) {
-        // その他の形式
-        dateStr = dateMatch[1];
+      const dateMatch = fullText.match(/(\d{4})年(\d{1,2})月(\d{1,2})日\s+\d{1,2}時\d{1,2}分\d{1,2}秒/i) ||
+                        fullText.match(/(\d{4})年(\d{1,2})月(\d{1,2})日/i) ||
+                        fullText.match(/(\d{4})[/-](\d{1,2})[/-](\d{1,2})/i) || 
+                        fullText.match(/(\d{4})\.(\d{1,2})\.(\d{1,2})/) ||  // 修正：2024.06.12 に対応
+                        fullText.match(/(\d{1,2}[/-]\d{1,2}\s+\d{1,2}:\d{2})/i) ||
+                        fullText.match(/日時[:：]\s*(\d{4}年\d{1,2}月\d{1,2}日)/i);
+      
+      let dateStr = new Date().toISOString().split('T')[0]; // デフォルト値（今日の日付）
+  
+      if (dateMatch) {
+          if (dateMatch[1] && dateMatch.length >= 4) {
+              // YYYY年MM月DD日 または YYYY/MM/DD, YYYY-MM-DD, YYYY.MM.DD の形式
+              const year = dateMatch[1];
+              const month = dateMatch[2].padStart(2, '0');
+              const day = dateMatch[3].padStart(2, '0');
+              dateStr = `${year}-${month}-${day}`;
+          }
       }
-    }
+      
+      return dateStr;
+  }
     
     console.log(`抽出された日付: ${dateStr}`);
     
